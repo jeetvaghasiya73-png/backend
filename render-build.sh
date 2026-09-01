@@ -7,4 +7,3 @@ pip install -r requirements.txt
 
 # Install Playwright browsers and dependencies for Linux
 playwright install chromium
-playwright install-deps chromium
