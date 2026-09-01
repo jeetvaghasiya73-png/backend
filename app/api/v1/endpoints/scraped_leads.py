@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
@@ -10,9 +10,77 @@ from app.schemas.scraped_lead import ScrapedLeadOut, ScrapedLeadUpdate
 
 import csv
 import io
+import pandas as pd
 from fastapi.responses import StreamingResponse
+import numpy as np
 
 router = APIRouter()
+
+@router.post("/upload")
+def upload_scraped_leads(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin_user = Depends(get_current_admin_user)
+):
+    """
+    Upload an Excel (.xlsx) file containing scraped leads and insert them into the database.
+    """
+    if not file.filename.endswith('.xlsx'):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
+        
+    try:
+        contents = file.file.read()
+        df = pd.read_excel(io.BytesIO(contents))
+        
+        # Replace NaNs with empty string
+        df = df.replace({np.nan: None})
+        
+        inserted_count = 0
+        
+        for _, row in df.iterrows():
+            email = row.get("bussiness_email")
+            if not email or str(email).strip() == "" or str(email).lower() == "nan":
+                continue # Skip leads without email
+                
+            # Check if this lead already exists by name and city to prevent duplicates
+            b_name = row.get("bussiness_name", "")
+            city = row.get("scraped_city", "")
+            
+            existing = db.query(ScrapedLead).filter(
+                ScrapedLead.bussiness_name == b_name,
+                ScrapedLead.scraped_city == city
+            ).first()
+            
+            if existing:
+                continue
+                
+            new_lead = ScrapedLead(
+                bussiness_name=b_name,
+                bussiness_email=email,
+                bussiness_number=row.get("bussiness_number", ""),
+                bussiness_area=row.get("bussiness_area", ""),
+                rating=str(row.get("rating", "")),
+                landmark=row.get("landmark", ""),
+                total_review=str(row.get("total_review", "")),
+                building=row.get("building", ""),
+                pincode=str(row.get("pincode", "")),
+                bussiness_website=row.get("bussiness_website", ""),
+                category=row.get("category", ""),
+                bussiness_address=row.get("bussiness_address", ""),
+                service=row.get("service", ""),
+                scraped_city=city,
+                scraped_service=row.get("scraped_service", ""),
+                status="pending"
+            )
+            db.add(new_lead)
+            inserted_count += 1
+            
+        db.commit()
+        return {"message": f"Successfully imported {inserted_count} leads", "inserted": inserted_count}
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
 
 @router.get("/export")
 def export_scraped_leads(

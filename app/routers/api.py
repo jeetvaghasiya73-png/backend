@@ -12,7 +12,6 @@ from app.api.v1.endpoints import (
     users,
     api_tokens,
     public,
-    scraper,
     scraped_leads,
     email
 )
@@ -30,7 +29,6 @@ api_router.include_router(seo.router, prefix="/seo", tags=["seo"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(api_tokens.router, prefix="/api-tokens", tags=["api_tokens"])
 api_router.include_router(public.router, prefix="/public", tags=["public"])
-api_router.include_router(scraper.router, prefix="/scraper", tags=["scraper"])
 api_router.include_router(scraped_leads.router, prefix="/scraped-leads", tags=["scraped_leads"])
 api_router.include_router(email.router, prefix="/email", tags=["email"])
 
