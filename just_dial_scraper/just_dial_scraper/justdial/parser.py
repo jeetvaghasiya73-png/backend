@@ -114,6 +114,7 @@ def ensure_chrome_running():
         
         chrome_args = [
             chrome_path,
+            "--headless=new",
             "--remote-debugging-port=9222",
             f"--user-data-dir={user_data_dir}",
             "--no-first-run",
@@ -122,6 +123,7 @@ def ensure_chrome_running():
             "--disable-blink-features=AutomationControlled",
             '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         ]
+
         
         subprocess.Popen(chrome_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
