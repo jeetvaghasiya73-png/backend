@@ -211,3 +211,36 @@ def update_scraped_lead(
     db.commit()
     db.refresh(lead)
     return lead
+
+@router.post("/test-inject", response_model=ScrapedLeadOut)
+def inject_test_lead(
+    email: str = Query(..., description="The email address to inject"),
+    db: Session = Depends(get_db),
+    admin_user = Depends(get_current_admin_user)
+):
+    """
+    Inject a fake lead to test the email worker (Admin only).
+    """
+    from datetime import datetime, timezone
+    
+    # Use default campaign
+    from app.models.campaign import Campaign
+    campaign = db.query(Campaign).filter(Campaign.name == "Default Autonomous Outreach").first()
+    
+    new_lead = ScrapedLead(
+        bussiness_name="Test Business LLC",
+        bussiness_email=email,
+        bussiness_number="1234567890",
+        bussiness_website="example.com",
+        scraped_city="Test City",
+        scraped_service="Test Service",
+        category="Test Category",
+        email_status="pending",
+        campaign_id=campaign.id if campaign else None,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(new_lead)
+    db.commit()
+    db.refresh(new_lead)
+    return new_lead
+
