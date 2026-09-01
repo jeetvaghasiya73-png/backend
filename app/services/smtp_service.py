@@ -7,23 +7,48 @@ from app.core.config import settings
 
 logger = logging.getLogger("smtp_service")
 
+import os
+import base64
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+
+logger = logging.getLogger("smtp_service")
+
 class SMTPEmailSender:
     def __init__(self):
-        self.host = settings.SMTP_HOST
-        self.port = settings.SMTP_PORT
-        self.username = settings.SMTP_USERNAME
-        self.password = settings.SMTP_PASSWORD
-        self.from_email = settings.SMTP_FROM_EMAIL or self.username
-        self.from_name = settings.SMTP_FROM_NAME
-        self.use_tls = settings.SMTP_USE_TLS
+        # We no longer use SMTP, but we keep the same class interface
+        self.from_email = settings.SMTP_FROM_EMAIL or "info@nexora.ai"
+        self.from_name = settings.SMTP_FROM_NAME or "Nexora AI"
+        
+        # Load Gmail API scopes
+        self.scopes = ['https://www.googleapis.com/auth/gmail.send']
+        
+        # Find token path (assumes token.json is in the project root or backend folder)
+        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.token_path = os.path.join(backend_dir, "token.json")
+        self.credentials_path = os.path.join(backend_dir, "credentials.json")
 
-    def _connect(self) -> smtplib.SMTP:
-        """Establish and return an authenticated SMTP connection."""
-        server = smtplib.SMTP(self.host, self.port, timeout=15)
-        if self.use_tls:
-            server.starttls()
-        server.login(self.username, self.password)
-        return server
+    def _get_gmail_service(self):
+        """Establish and return an authenticated Gmail API service."""
+        creds = None
+        if os.path.exists(self.token_path):
+            creds = Credentials.from_authorized_user_file(self.token_path, self.scopes)
+            
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                    # Attempt to save the refreshed token
+                    with open(self.token_path, 'w') as token:
+                        token.write(creds.to_json())
+                except Exception as e:
+                    logger.error(f"Failed to refresh Gmail token: {e}")
+                    raise
+            else:
+                raise Exception(f"Valid token.json not found at {self.token_path}. Please run generate_gmail_token.py locally first.")
+                
+        return build('gmail', 'v1', credentials=creds)
 
     def send_email(
         self,
@@ -32,13 +57,10 @@ class SMTPEmailSender:
         body: str,
         is_html: bool = False,
         html_body: Optional[str] = None,
-        server: Optional[smtplib.SMTP] = None,
+        server=None, # kept for signature compatibility
     ) -> Tuple[bool, Optional[str]]:
         """
-        Sends an email using standard SMTP.
-        If html_body is provided, it's sent directly as the HTML content.
-        If is_html=True but html_body is None, falls back to wrap_in_html_template.
-        Optionally accepts a pre-established SMTP server connection for bulk sending.
+        Sends an email using the Google Gmail HTTP API.
         """
         actual_recipient = recipient_email
         if settings.EMAIL_TEST_MODE:
@@ -47,12 +69,6 @@ class SMTPEmailSender:
                 f"[TEST MODE] Redirecting outreach from <{recipient_email}> to test recipient <{actual_recipient}>"
             )
 
-        if not self.username or not self.password:
-            error_msg = "SMTP username or password not configured in environment settings."
-            logger.error(error_msg)
-            return False, error_msg
-
-        own_server = False
         try:
             msg = EmailMessage()
             msg["Subject"] = subject
@@ -60,16 +76,12 @@ class SMTPEmailSender:
             msg["To"] = actual_recipient
 
             if html_body:
-                # Pre-built HTML provided — use it directly
-                # IMPORTANT: set plain text FIRST, then add HTML as alternative
-                # Email clients display the LAST alternative (HTML), falling back to plain text
                 import re
                 plain = re.sub(r"<[^>]+>", "", html_body)
                 plain = re.sub(r"\s+", " ", plain).strip()
                 msg.set_content(plain)
                 msg.add_alternative(html_body, subtype="html")
             elif is_html:
-                # Legacy path: wrap plain text in generic template
                 wrapped = self.wrap_in_html_template(body, subject)
                 import re
                 plain = re.sub(r"<[^>]+>", "", wrapped)
@@ -79,30 +91,18 @@ class SMTPEmailSender:
             else:
                 msg.set_content(body)
 
-            # Use provided server or create a new one
-            if server is None:
-                own_server = True
-                logger.info(f"Connecting to SMTP server {self.host}:{self.port}...")
-                server = self._connect()
+            # Gmail API requires base64url encoded string
+            encoded_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+            create_message = {'raw': encoded_message}
 
-            server.send_message(msg)
-            logger.info(f"Email successfully sent to <{actual_recipient}>")
-
-            if own_server:
-                server.quit()
-
+            service = self._get_gmail_service()
+            send_message = (service.users().messages().send(userId="me", body=create_message).execute())
+            
+            logger.info(f"Email successfully sent to <{actual_recipient}> (Message ID: {send_message['id']})")
             return True, None
 
-        except smtplib.SMTPResponseException as e:
-            error_msg = f"SMTP Response Error {e.smtp_code}: {e.smtp_error.decode('utf-8', errors='ignore')}"
-            logger.error(error_msg)
-            return False, error_msg
-        except smtplib.SMTPException as e:
-            error_msg = f"SMTP Error sending email: {str(e)}"
-            logger.error(error_msg)
-            return False, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during SMTP send: {str(e)}"
+            error_msg = f"Unexpected error during Gmail API send: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
 
