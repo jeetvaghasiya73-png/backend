@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 import json 
 import socket
 import subprocess
@@ -107,6 +108,8 @@ def is_port_in_use(port):
         return s.connect_ex(('127.0.0.1', port)) == 0
 
 def ensure_chrome_running():
+    if os.name != 'nt':
+        return
     if not is_port_in_use(9222):
         print("Chrome is not running on port 9222. Launching Chrome...")
         chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -139,11 +142,22 @@ def get_cookies(search,lat, lng, city="surat"):
     ensure_chrome_running()
     with sync_playwright() as p:
 
-        browser = p.chromium.connect_over_cdp(
-            "http://127.0.0.1:9222"
-        )
-
-        context = browser.contexts[0]
+        if os.name == 'nt':
+            browser = p.chromium.connect_over_cdp(
+                "http://127.0.0.1:9222"
+            )
+            context = browser.contexts[0]
+        else:
+            browser = None
+            context = p.chromium.launch_persistent_context(
+                user_data_dir="./chrome-profile",
+                headless=True,
+                args=[
+                    "--disable-http2",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
 
         page = context.new_page()
 
@@ -180,7 +194,10 @@ def get_cookies(search,lat, lng, city="surat"):
                 else:
                     print(f"All {max_retries} navigation attempts failed. Raising error.")
                     page.close()
-                    browser.close()
+                    if browser:
+                        browser.close()
+                    else:
+                        context.close()
                     raise
 
         # 1. Click the location input, fill the city name, and select the first suggestion
@@ -307,7 +324,10 @@ def get_cookies(search,lat, lng, city="surat"):
         # Retrieve the final cookies before closing the browser context
         final_cookies = context.cookies()
         page.close()
-        browser.close()
+        if browser:
+            browser.close()
+        else:
+            context.close()
 
         response = {
             "status": 200, 
