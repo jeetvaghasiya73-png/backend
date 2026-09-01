@@ -6,6 +6,7 @@ import subprocess
 import time
 from curl_cffi import requests
 from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth_sync
 import random
 
 
@@ -117,7 +118,6 @@ def ensure_chrome_running():
         
         chrome_args = [
             chrome_path,
-            "--headless=new",
             "--remote-debugging-port=9222",
             f"--user-data-dir={user_data_dir}",
             "--no-first-run",
@@ -160,6 +160,7 @@ def get_cookies(search,lat, lng, city="surat"):
             )
 
         page = context.new_page()
+        stealth_sync(page)
 
         # Setup listener to capture resultsPageListing requests
         captured_data = []
