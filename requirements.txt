@@ -16,3 +16,4 @@ curl_cffi>=0.6.0b1
 playwright>=1.40.0
 pandas>=2.0.0
 openpyxl>=3.1.0
+lxml>=4.9.0  
