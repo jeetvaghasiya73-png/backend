@@ -333,12 +333,7 @@ def run_scraper_in_background(cities: List[str], keywords: List[str], max_pages:
     try:
         # 1. Update config.json in just_dial_scraper
         current_file = os.path.abspath(__file__)
-        backend_dir = current_file
-        while backend_dir and os.path.basename(backend_dir) != "backend":
-            parent = os.path.dirname(backend_dir)
-            if parent == backend_dir:
-                break
-            backend_dir = parent
+        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file)))))
         
         # The scraper code lives in a nested directory: just_dial_scraper/just_dial_scraper/
         scraper_dir = os.path.join(backend_dir, "just_dial_scraper", "just_dial_scraper")
@@ -666,12 +661,7 @@ def trigger_manual_sync(admin_user = Depends(get_current_admin_user)):
     Manually sync scraped leads from MySQL to SQLite database (Admin only).
     """
     current_file = os.path.abspath(__file__)
-    backend_dir = current_file
-    while backend_dir and os.path.basename(backend_dir) != "backend":
-        parent = os.path.dirname(backend_dir)
-        if parent == backend_dir:
-            break
-        backend_dir = parent
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file)))))
     
     scraper_dir = os.path.join(backend_dir, "just_dial_scraper", "just_dial_scraper")
     
