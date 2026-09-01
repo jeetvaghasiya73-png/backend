@@ -232,38 +232,29 @@ def crawl_single_lead(lead, cookie_dict):
     else:
         return None, lead, err
 
-def update_lead_status(mysql_conn, table_name, docid, status):
-    if not mysql_conn or not docid:
+def update_lead_status(pg_conn, table_name, docid, status):
+    if not pg_conn or not docid:
         return
     try:
-        cursor = mysql_conn.cursor()
-        sql = f"UPDATE `{table_name}` SET `status` = %s WHERE `docid` = %s"
+        cursor = pg_conn.cursor()
+        sql = f'UPDATE "{table_name}" SET "status" = %s WHERE "docid" = %s'
         cursor.execute(sql, (status, docid))
-        mysql_conn.commit()
+        pg_conn.commit()
         cursor.close()
     except Exception as e:
-        print(f"Error updating lead status in MySQL: {e}")
+        print(f"Error updating lead status in PostgreSQL: {e}")
 
 def crawl_pdp():
     print("\n========================================================")
     print("[*] STARTING DETAILED PDP CRAWLER (THREADED)")
     print("========================================================")
     
-    # 1. Initialize PDP database (MySQL only)
-    mysql_pdp = init_pdp_database()
+    # 1. Initialize PDP database (PostgreSQL only)
+    pg_pdp = init_pdp_database()
     
     # 2. Get today's leads table name
     leads_table = get_table_name()
     print(f"Loading leads from today's table: '{leads_table}'...")
-    
-    # 3. Retrieve database config to query leads
-    config = load_config()
-    db_config = config.get("database", {})
-    host = db_config.get("host", "localhost")
-    port = db_config.get("port", 3306)
-    user = db_config.get("user", "root")
-    password = db_config.get("password", "meet@001")
-    database_name = db_config.get("database_name", "leads")
     
     # Configurable thread pool size
     max_workers = int(os.environ.get("PDP_WORKERS", 5))
@@ -281,21 +272,19 @@ def crawl_pdp():
     
     leads = []
     
-    # Load leads from MySQL
-    mysql_conn = None
+    # Load leads from PostgreSQL
+    pg_conn = None
     try:
-        mysql_conn = mysql.connector.connect(
-            host=host, port=port, user=user,
-            password=password, database=database_name
-        )
-        cursor = mysql_conn.cursor(dictionary=True)
-        cursor.execute(f"SELECT docid, name, weburl, scraped_city, scraped_service, VNumber, wpnumber, compRating, NewAddress, area, pincode FROM {leads_table} WHERE status = 'pending' OR status IS NULL")
+        from psycopg2.extras import RealDictCursor
+        pg_conn = get_connection()
+        cursor = pg_conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(f'SELECT "docid", "name", "weburl", "scraped_city", "scraped_service", "VNumber", "wpnumber", "compRating", "NewAddress", "area", "pincode" FROM "{leads_table}" WHERE "status" = \'pending\' OR "status" IS NULL')
         leads = cursor.fetchall()
         cursor.close()
-        mysql_conn.close()
-        print(f"Successfully loaded {len(leads)} pending/un-crawled leads from MySQL.")
+        pg_conn.close()
+        print(f"Successfully loaded {len(leads)} pending/un-crawled leads from PostgreSQL.")
     except Exception as e:
-        print(f"MySQL leads load failed: {e}")
+        print(f"PostgreSQL leads load failed: {e}")
                 
     if not leads:
         print("No leads found in today's table to crawl detailed pages.")
