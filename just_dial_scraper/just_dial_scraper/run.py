@@ -5,38 +5,25 @@ from datetime import datetime
 
 # Adjust path to find justdial package
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "justdial"))
-from justdial.db import init_databases, get_table_name, load_config, get_pdp_table_name
+from justdial.db import init_databases, get_table_name, get_connection, get_pdp_table_name
 from justdial.scraper import run_scraper
 from justdial.PDP import crawl_pdp
 
 def test_db_connection():
-    import mysql.connector
-    config = load_config()
-    db_config = config.get("database", {})
-    host = db_config.get("host", "localhost")
-    port = db_config.get("port", 3306)
-    user = db_config.get("user", "root")
-    password = db_config.get("password", "meet@001")
-    database_name = db_config.get("database_name", "leads")
-    
-    print(f"Testing connection to MySQL server at {host}:{port}...")
+    import psycopg2
+    print("Testing connection to PostgreSQL...")
     try:
-        conn = mysql.connector.connect(
-            host=host,
-            port=port,
-            user=user,
-            password=password
-        )
-        print(f"[SUCCESS] MySQL connection succeeded using user: '{user}'.")
+        conn = get_connection()
+        print("[SUCCESS] PostgreSQL connection succeeded.")
         
         cursor = conn.cursor()
-        cursor.execute("SHOW DATABASES")
-        dbs = [r[0] for r in cursor.fetchall()]
-        print(f"Available Databases: {dbs}")
+        cursor.execute("SELECT current_database();")
+        db = cursor.fetchone()[0]
+        print(f"Connected to Database: {db}")
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"[FAILED] MySQL connection failed: {e}")
+        print(f"[FAILED] PostgreSQL connection failed: {e}")
 
 def export_db_to_excel(date_str=None):
     try:
@@ -47,14 +34,7 @@ def export_db_to_excel(date_str=None):
         print("Please install them using: pip install pandas openpyxl")
         return
 
-    import mysql.connector
-    config = load_config()
-    db_config = config.get("database", {})
-    host = db_config.get("host", "localhost")
-    port = db_config.get("port", 3306)
-    user = db_config.get("user", "root")
-    password = db_config.get("password", "meet@001")
-    database_name = db_config.get("database_name", "leads")
+    import psycopg2
     
     table_name = get_table_name(date_str)
     print(f"Attempting to export table '{table_name}' to Excel...")
@@ -62,19 +42,13 @@ def export_db_to_excel(date_str=None):
     df = None
     
     try:
-        mysql_conn = mysql.connector.connect(
-            host=host,
-            port=port,
-            user=user,
-            password=password,
-            database=database_name
-        )
-        query = f"SELECT * FROM {table_name}"
-        df = pd.read_sql(query, mysql_conn)
-        print(f"Successfully loaded {len(df)} rows from MySQL table '{table_name}'.")
-        mysql_conn.close()
+        pg_conn = get_connection()
+        query = f'SELECT * FROM "{table_name}"'
+        df = pd.read_sql(query, pg_conn)
+        print(f"Successfully loaded {len(df)} rows from PostgreSQL table '{table_name}'.")
+        pg_conn.close()
     except Exception as e:
-        print(f"MySQL export failed: {e}")
+        print(f"PostgreSQL export failed: {e}")
         df = None
 
     if df is not None and len(df) > 0:
@@ -96,14 +70,7 @@ def export_pdp_to_excel(date_str=None):
         print("Please install them using: pip install pandas openpyxl")
         return
 
-    import mysql.connector
-    config = load_config()
-    db_config = config.get("database", {})
-    host = db_config.get("host", "localhost")
-    port = db_config.get("port", 3306)
-    user = db_config.get("user", "root")
-    password = db_config.get("password", "meet@001")
-    database_name = db_config.get("database_name", "leads")
+    import psycopg2
     
     table_name = get_pdp_table_name(date_str)
     print(f"Attempting to export PDP table '{table_name}' to Excel...")
@@ -111,19 +78,13 @@ def export_pdp_to_excel(date_str=None):
     df = None
     
     try:
-        mysql_conn = mysql.connector.connect(
-            host=host,
-            port=port,
-            user=user,
-            password=password,
-            database=database_name
-        )
-        query = f"SELECT * FROM {table_name}"
-        df = pd.read_sql(query, mysql_conn)
-        print(f"Successfully loaded {len(df)} rows from MySQL table '{table_name}'.")
-        mysql_conn.close()
+        pg_conn = get_connection()
+        query = f'SELECT * FROM "{table_name}"'
+        df = pd.read_sql(query, pg_conn)
+        print(f"Successfully loaded {len(df)} rows from PostgreSQL table '{table_name}'.")
+        pg_conn.close()
     except Exception as e:
-        print(f"MySQL export failed: {e}")
+        print(f"PostgreSQL export failed: {e}")
         df = None
 
     if df is not None and len(df) > 0:
@@ -180,14 +141,14 @@ def main():
         
     elif args.scrape:
         print("Initializing database schemas...")
-        mysql_conn = init_databases()
+        pg_conn = init_databases()
         
         print("Starting Justdial parallel scraper...")
         try:
-            run_scraper(mysql_conn)
+            run_scraper(pg_conn)
         finally:
-            if mysql_conn:
-                mysql_conn.close()
+            if pg_conn:
+                pg_conn.close()
 
 if __name__ == "__main__":
     main()

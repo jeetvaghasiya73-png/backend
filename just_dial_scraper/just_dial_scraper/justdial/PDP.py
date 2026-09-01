@@ -3,7 +3,7 @@ import sys
 import json
 import time
 import threading
-import mysql.connector
+import psycopg2
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from lxml import html
@@ -11,9 +11,9 @@ from curl_cffi import requests
 
 # Ensure sibling imports work correctly
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from db import init_pdp_database, save_pdp_to_db, load_config, get_table_name
+from db import init_pdp_database, save_pdp_to_db, get_table_name, get_connection
 
-# Thread-safe lock for MySQL writes (mysql.connector is NOT thread-safe)
+# Thread-safe lock for PostgreSQL writes
 db_lock = threading.Lock()
 
 def make_re(url, cookie_dict=None):
