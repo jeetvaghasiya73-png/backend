@@ -79,58 +79,45 @@ def add_log(message: str):
     broadcast_state()
 
 def sync_pdp_to_sqlite(scraper_dir: str):
-    """Read today's PDP data from MySQL and upsert into SQLite scraped_leads table."""
-    add_log("Starting MySQL -> SQLite sync for scraped leads...")
+    """Read today's PDP data from PostgreSQL and upsert into SQLite scraped_leads table."""
+    add_log("Starting PostgreSQL -> SQLite sync for scraped leads...")
     
     try:
-        import mysql.connector
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
         
-        # Load MySQL config from the scraper's config.json
-        config_path = os.path.join(scraper_dir, "config", "config.json")
-        if not os.path.exists(config_path):
-            config_path = os.path.join(scraper_dir, "config.json")
-        
-        if not os.path.exists(config_path):
-            add_log("[Sync] WARNING: config.json not found, skipping sync.")
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            add_log("[Sync] WARNING: DATABASE_URL not set, cannot connect to PostgreSQL. Skipping sync.")
             return
-        
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
-        
-        db_config = config_data.get("database", {})
-        host = db_config.get("host", "localhost")
-        port = db_config.get("port", 3306)
-        user = db_config.get("user", "root")
-        password = db_config.get("password", "")
-        database_name = db_config.get("database_name", "leads")
+            
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgres://", 1)
         
         # Resolve today's PDP table name
         date_str = datetime.now().strftime('%Y_%m_%d')
         pdp_table = f"justdial_pdp_{date_str}"
         
-        add_log(f"[Sync] Connecting to MySQL database '{database_name}', table '{pdp_table}'...")
+        add_log(f"[Sync] Connecting to PostgreSQL, checking for table '{pdp_table}'...")
         
-        mysql_conn = mysql.connector.connect(
-            host=host, port=port, user=user,
-            password=password, database=database_name
-        )
-        cursor = mysql_conn.cursor(dictionary=True)
+        pg_conn = psycopg2.connect(db_url)
+        cursor = pg_conn.cursor(cursor_factory=RealDictCursor)
         
         # Check if PDP table exists
-        cursor.execute("SHOW TABLES LIKE %s", (pdp_table,))
-        if not cursor.fetchone():
-            add_log(f"[Sync] PDP table '{pdp_table}' not found in MySQL. Skipping sync.")
+        cursor.execute("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s)", (pdp_table,))
+        if not cursor.fetchone()['exists']:
+            add_log(f"[Sync] PDP table '{pdp_table}' not found in PostgreSQL. Skipping sync.")
             cursor.close()
-            mysql_conn.close()
+            pg_conn.close()
             return
         
         # Fetch all PDP records with non-empty emails
-        cursor.execute(f"SELECT * FROM `{pdp_table}` WHERE bussiness_email IS NOT NULL AND TRIM(bussiness_email) != ''")
+        cursor.execute(f"SELECT * FROM {pdp_table} WHERE bussiness_email IS NOT NULL AND TRIM(bussiness_email) != ''")
         pdp_rows = cursor.fetchall()
         cursor.close()
-        mysql_conn.close()
+        pg_conn.close()
         
-        add_log(f"[Sync] Loaded {len(pdp_rows)} leads from MySQL.")
+        add_log(f"[Sync] Loaded {len(pdp_rows)} leads from PostgreSQL.")
         
         if not pdp_rows:
             add_log("[Sync] No leads found to sync. Sync complete.")

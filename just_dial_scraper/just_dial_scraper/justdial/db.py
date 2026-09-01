@@ -1,6 +1,7 @@
 import os
 import json
-import mysql.connector
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime
 
 # Columns index mapping provided by the user representing Justdial's API row format
@@ -30,41 +31,6 @@ columns_index = {
     "logo": 82,
 }
 
-# Load configuration dynamically from config/config.json
-def load_config():
-    project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-    config_path = os.path.join(project_root, "config", "config.json")
-    if not os.path.exists(config_path):
-        # Fallback to root-level config.json for backward compatibility
-        config_path = os.path.join(project_root, "config.json")
-    if not os.path.exists(config_path):
-        return {
-            "database": {
-                "host": "localhost",
-                "port": 3306,
-                "user": "root",
-                "password": "meet@001",
-                "database_name": "leads"
-            }
-        }
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading config.json in db.py: {e}")
-        return {}
-
-def _get_db_config():
-    config = load_config()
-    db_config = config.get("database", {})
-    return {
-        "host": db_config.get("host", "localhost"),
-        "port": db_config.get("port", 3306),
-        "user": db_config.get("user", "root"),
-        "password": db_config.get("password", "meet@001"),
-        "database_name": db_config.get("database_name", "leads")
-    }
-
 # Resolve date-based table name: justdial_leads_YYYY_MM_DD
 def get_table_name(date_str=None):
     if not date_str:
@@ -77,86 +43,93 @@ def get_pdp_table_name(date_str=None):
         date_str = datetime.now().strftime('%Y_%m_%d')
     return f"justdial_pdp_{date_str}"
 
-# Initialize MySQL database for leads scraping
+def get_connection():
+    """Get a psycopg2 connection using DATABASE_URL or fallback config."""
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        # If the URL is SQLAlchemy style (postgresql://), convert to postgres:// for psycopg2 just in case
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgres://", 1)
+        return psycopg2.connect(db_url)
+    
+    # Fallback to local config if no DATABASE_URL
+    project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    config_path = os.path.join(project_root, "config", "config.json")
+    if not os.path.exists(config_path):
+        config_path = os.path.join(project_root, "config.json")
+    
+    cfg = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f).get("database", {})
+        except Exception as e:
+            print(f"Error loading config.json in db.py: {e}")
+
+    host = cfg.get("host", "localhost")
+    port = cfg.get("port", 5432)
+    user = cfg.get("user", "postgres")
+    password = cfg.get("password", "")
+    database_name = cfg.get("database_name", "leads")
+    
+    return psycopg2.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        dbname=database_name
+    )
+
+# Initialize PostgreSQL database for leads scraping
 def init_databases():
     table_name = get_table_name()
-    cfg = _get_db_config()
     
     try:
-        conn = mysql.connector.connect(
-            host=cfg["host"], port=cfg["port"],
-            user=cfg["user"], password=cfg["password"]
-        )
+        conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {cfg['database_name']}")
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        mysql_conn = mysql.connector.connect(
-            host=cfg["host"], port=cfg["port"],
-            user=cfg["user"], password=cfg["password"],
-            database=cfg["database_name"]
-        )
-        cursor = mysql_conn.cursor()
         
         sorted_cols = sorted(columns_index.items(), key=lambda x: x[1])
         cols_sql = []
         for col_name, idx in sorted_cols:
             if col_name == 'docid':
-                cols_sql.append("docid VARCHAR(100) PRIMARY KEY")
+                cols_sql.append('"docid" VARCHAR(100) PRIMARY KEY')
             else:
-                cols_sql.append(f"`{col_name}` TEXT")
+                cols_sql.append(f'"{col_name}" TEXT')
         
-        cols_sql.append("`scraped_city` VARCHAR(100)")
-        cols_sql.append("`scraped_service` VARCHAR(100)")
-        cols_sql.append("`status` VARCHAR(50) DEFAULT 'pending'")
-        cols_sql.append("`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
+        cols_sql.append('"scraped_city" VARCHAR(100)')
+        cols_sql.append('"scraped_service" VARCHAR(100)')
+        cols_sql.append('"status" VARCHAR(50) DEFAULT \'pending\'')
+        cols_sql.append('"created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         
         create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (\n" + ",\n".join(cols_sql) + "\n)"
         cursor.execute(create_table_query)
-        mysql_conn.commit()
+        conn.commit()
         
-        # Ensure status column exists (for backward compatibility with tables already created)
+        # Ensure status column exists (for backward compatibility)
         try:
-            cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `status` VARCHAR(50) DEFAULT 'pending'")
-            mysql_conn.commit()
-        except Exception:
-            pass # Column already exists
+            cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN "status" VARCHAR(50) DEFAULT \'pending\'')
+            conn.commit()
+        except psycopg2.errors.DuplicateColumn:
+            conn.rollback() # Column already exists
             
         cursor.close()
-        print(f"[OK] MySQL database '{cfg['database_name']}' and table '{table_name}' initialized successfully.")
-        return mysql_conn
+        print(f"[OK] PostgreSQL table '{table_name}' initialized successfully.")
+        return conn
     except Exception as e:
-        print(f"[FATAL] MySQL connection failed: {e}")
+        print(f"[FATAL] PostgreSQL connection failed: {e}")
         return None
 
-# Initialize MySQL database for PDP crawling
+# Initialize PostgreSQL database for PDP crawling
 def init_pdp_database():
     table_name = get_pdp_table_name()
-    cfg = _get_db_config()
     
     try:
-        conn = mysql.connector.connect(
-            host=cfg["host"], port=cfg["port"],
-            user=cfg["user"], password=cfg["password"]
-        )
+        conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {cfg['database_name']}")
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        mysql_conn = mysql.connector.connect(
-            host=cfg["host"], port=cfg["port"],
-            user=cfg["user"], password=cfg["password"],
-            database=cfg["database_name"]
-        )
-        cursor = mysql_conn.cursor()
         
         create_query = f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             bussiness_name TEXT,
             bussiness_email TEXT,
             bussiness_number TEXT,
@@ -172,21 +145,21 @@ def init_pdp_database():
             service TEXT,
             scraped_city VARCHAR(100),
             scraped_service VARCHAR(100),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
         cursor.execute(create_query)
-        mysql_conn.commit()
+        conn.commit()
         cursor.close()
-        print(f"[OK] MySQL database '{cfg['database_name']}' and PDP table '{table_name}' initialized successfully.")
-        return mysql_conn
+        print(f"[OK] PostgreSQL PDP table '{table_name}' initialized successfully.")
+        return conn
     except Exception as e:
-        print(f"[FATAL] MySQL connection failed for PDP: {e}")
+        print(f"[FATAL] PostgreSQL connection failed for PDP: {e}")
         return None
 
-# Save a single lead row to MySQL
-def save_lead_to_db(mysql_conn, row, columns_map, city, service, commit=False):
-    if not mysql_conn:
+# Save a single lead row to PostgreSQL
+def save_lead_to_db(pg_conn, row, columns_map, city, service, commit=False):
+    if not pg_conn:
         return
     
     sorted_cols = sorted(columns_index.items(), key=lambda x: x[1])
@@ -212,61 +185,64 @@ def save_lead_to_db(mysql_conn, row, columns_map, city, service, commit=False):
         return
         
     try:
-        cursor = mysql_conn.cursor()
+        cursor = pg_conn.cursor()
         fields = list(record.keys())
         placeholders = [f"%s" for _ in fields]
-        update_parts = [f"`{f}` = VALUES(`{f}`)" for f in fields if f != "docid"]
         
-        sql = f"INSERT INTO {table_name} ({', '.join([f'`{f}`' for f in fields])}) VALUES ({', '.join(placeholders)}) ON DUPLICATE KEY UPDATE {', '.join(update_parts)}"
+        # Build ON CONFLICT DO UPDATE SET
+        update_parts = [f'"{f}" = EXCLUDED."{f}"' for f in fields if f != "docid"]
+        
+        sql = f'INSERT INTO {table_name} ({", ".join([f"{chr(34)}{f}{chr(34)}" for f in fields])}) VALUES ({", ".join(placeholders)}) ON CONFLICT ("docid") DO UPDATE SET {", ".join(update_parts)}'
         values = tuple(record[f] for f in fields)
         cursor.execute(sql, values)
         if commit:
-            mysql_conn.commit()
+            pg_conn.commit()
         cursor.close()
     except Exception as e:
-        print(f"Error inserting row into MySQL: {e}")
+        pg_conn.rollback()
+        print(f"Error inserting row into PostgreSQL: {e}")
 
-# Save parsed PDP details to MySQL
-def save_pdp_to_db(mysql_conn, record, commit=False):
-    if not mysql_conn:
+# Save parsed PDP details to PostgreSQL
+def save_pdp_to_db(pg_conn, record, commit=False):
+    if not pg_conn:
         return
     
     table_name = get_pdp_table_name()
     
     try:
-        cursor = mysql_conn.cursor()
+        cursor = pg_conn.cursor()
         fields = list(record.keys())
         placeholders = [f"%s" for _ in fields]
         
-        sql = f"INSERT INTO {table_name} ({', '.join([f'`{f}`' for f in fields])}) VALUES ({', '.join(placeholders)})"
+        sql = f'INSERT INTO {table_name} ({", ".join([f"{chr(34)}{f}{chr(34)}" for f in fields])}) VALUES ({", ".join(placeholders)})'
         values = tuple(record[f] for f in fields)
         cursor.execute(sql, values)
         if commit:
-            mysql_conn.commit()
+            pg_conn.commit()
         cursor.close()
     except Exception as e:
-        print(f"Error inserting PDP row into MySQL: {e}")
+        pg_conn.rollback()
+        print(f"Error inserting PDP row into PostgreSQL: {e}")
 
 # Load all docids ever scraped across all daily leads tables to prevent duplicate scraping across different days
-def load_all_scraped_docids(mysql_conn):
+def load_all_scraped_docids(pg_conn):
     existing_docids = set()
-    if not mysql_conn:
+    if not pg_conn:
         return existing_docids
     try:
-        cursor = mysql_conn.cursor()
-        cursor.execute("SHOW TABLES")
+        cursor = pg_conn.cursor()
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
         tables = [r[0] for r in cursor.fetchall()]
         leads_tables = [t for t in tables if t.startswith("justdial_leads_")]
         
         for table in leads_tables:
-            cursor.execute(f"SELECT `docid` FROM `{table}`")
-            # Fetch all docids and add them to the set
+            cursor.execute(f'SELECT "docid" FROM {table}')
             for row in cursor.fetchall():
                 if row[0]:
                     existing_docids.add(str(row[0]))
         cursor.close()
         print(f"[OK] Loaded {len(existing_docids)} unique existing docids from database to prevent duplicates.")
     except Exception as e:
+        pg_conn.rollback()
         print(f"Error loading existing docids: {e}")
     return existing_docids
-
