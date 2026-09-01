@@ -40,8 +40,8 @@ class Settings(BaseSettings):
     )
     
     # Default Admin User — MUST be set via environment variables in production
-    ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "meet_0001")
-    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "9173739080@Meet")
+    ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME")
+    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD")
 
     # Outreach settings
     SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.example.com")
