@@ -358,6 +358,7 @@ def run_scraper_in_background(cities: List[str], keywords: List[str], max_pages:
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
+        env["PLAYWRIGHT_BROWSERS_PATH"] = "0"
         
         # 2. Run run.py --scrape
         if _cancelled():
