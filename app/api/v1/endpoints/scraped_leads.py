@@ -26,6 +26,8 @@ def get_val(row, *variants):
             return str(row[v]).strip()
     return ""
 
+from datetime import datetime, timezone
+
 @router.post("/upload")
 def upload_scraped_leads(
     file: UploadFile = File(...),
@@ -33,8 +35,8 @@ def upload_scraped_leads(
     admin_user = Depends(get_current_admin_user)
 ):
     """
-    Upload a CSV or Excel (.csv, .xlsx, .xls) file containing lead records and insert them into the database.
-    Flexible column resolver handles both snake_case and human Excel title columns.
+    Ultra-fast bulk upload for CSV or Excel (.csv, .xlsx, .xls) spreadsheet files into PostgreSQL/SQLite database.
+    Flexible column resolver handles both snake_case and human Excel title columns with high performance bulk insertion.
     """
     filename_lower = file.filename.lower() if file.filename else ""
     if not (filename_lower.endswith('.xlsx') or filename_lower.endswith('.xls') or filename_lower.endswith('.csv')):
@@ -50,10 +52,31 @@ def upload_scraped_leads(
         else:
             df = pd.read_excel(io.BytesIO(contents))
         
-        # Replace NaNs with None
-        df = df.replace({np.nan: None})
+        # Map DataFrame column headers (lowercase trim for flexible matching)
+        col_map = {str(col).strip().lower(): col for col in df.columns}
         
-        # Pre-fetch all existing emails in ONE query for O(1) in-memory check
+        def find_col(*candidates):
+            for cand in candidates:
+                if cand.lower() in col_map:
+                    return col_map[cand.lower()]
+            return None
+
+        col_email = find_col("bussiness_email", "business_email", "email", "email address", "email_address", "e-mail", "contact_email")
+        col_name = find_col("bussiness_name", "business_name", "company", "company name", "company_name", "name", "lead name", "lead_name", "title", "business name", "store_name")
+        col_city = find_col("scraped_city", "city", "location", "place", "town", "scraped city")
+        col_phone = find_col("bussiness_number", "business_number", "phone", "phone number", "phone_number", "mobile", "contact_number", "number", "business number")
+        col_website = find_col("bussiness_website", "business_website", "website", "url", "site", "web", "business website")
+        col_category = find_col("category", "industry", "type", "business_type", "sector")
+        col_service = find_col("scraped_service", "service", "keyword", "scraped_keyword", "services", "scraped service")
+        col_rating = find_col("rating", "score", "stars", "rate")
+        col_address = find_col("bussiness_address", "business_address", "address", "full_address", "business address")
+        col_area = find_col("bussiness_area", "business_area", "area")
+        col_landmark = find_col("landmark")
+        col_reviews = find_col("total_review", "total reviews", "reviews")
+
+        records = df.to_dict(orient="records")
+        
+        # Pre-fetch all existing emails in ONE SQL query for O(1) in-memory check
         existing_emails = set(
             e[0].lower() for e in db.query(ScrapedLead.bussiness_email).filter(
                 ScrapedLead.bussiness_email.isnot(None),
@@ -61,15 +84,15 @@ def upload_scraped_leads(
             ).all()
         )
         
-        inserted_count = 0
-        skipped_count = 0
-        total_rows = len(df)
-        cities_inserted = set()
         seen_emails = set()
+        leads_to_insert = []
+        cities_inserted = set()
+        skipped_count = 0
+        now_utc = datetime.now(timezone.utc)
         
-        for _, row in df.iterrows():
-            raw_email = get_val(row, "bussiness_email", "Business Email", "business_email", "Email", "email", "Email Address", "email_address")
-            b_name = get_val(row, "bussiness_name", "Business Name", "business_name", "Name", "name", "Company", "company", "Lead Name", "Title", "title")
+        for row in records:
+            raw_email = str(row[col_email]).strip() if col_email and row.get(col_email) is not None and str(row[col_email]).lower() != "nan" else ""
+            b_name = str(row[col_name]).strip() if col_name and row.get(col_name) is not None and str(row[col_name]).lower() != "nan" else ""
             
             if not b_name and not raw_email:
                 skipped_count += 1
@@ -86,49 +109,46 @@ def upload_scraped_leads(
             if not b_name:
                 b_name = first_email.split("@")[0].title() if first_email else "Direct Prospect"
 
-            city = get_val(row, "scraped_city", "City", "city", "location", "Location") or "Outreach"
-            phone = get_val(row, "bussiness_number", "Business Number", "business_number", "Phone", "phone", "Mobile", "mobile")
-            area = get_val(row, "bussiness_area", "Business Area", "business_area", "Area")
-            rating = get_val(row, "rating", "Rating", "Score", "score") or "4.5"
-            landmark = get_val(row, "landmark", "Landmark")
-            total_review = get_val(row, "total_review", "Total Reviews", "Total Review", "Reviews")
-            building = get_val(row, "building", "Building")
-            pincode = get_val(row, "pincode", "Pincode")
-            website = get_val(row, "bussiness_website", "Business Website", "business_website", "Website", "url", "URL")
-            category = get_val(row, "category", "Category", "Industry", "industry") or "B2B Lead"
-            address = get_val(row, "bussiness_address", "Business Address", "business_address", "Address")
-            service = get_val(row, "service", "Services", "Service") or "Digital Services"
-            scraped_service = get_val(row, "scraped_service", "Scraped Keyword", "Keyword", "scraped_keyword") or service
-                
-            new_lead = ScrapedLead(
-                bussiness_name=b_name,
-                bussiness_email=first_email,
-                bussiness_number=phone,
-                bussiness_area=area,
-                rating=rating,
-                landmark=landmark,
-                total_review=total_review,
-                building=building,
-                pincode=pincode,
-                bussiness_website=website,
-                category=category,
-                bussiness_address=address,
-                service=service,
-                scraped_city=city,
-                scraped_service=scraped_service,
-                email_status="pending"
-            )
-            db.add(new_lead)
-            inserted_count += 1
+            city = str(row[col_city]).strip() if col_city and row.get(col_city) is not None and str(row[col_city]).lower() != "nan" else "Outreach"
+            phone = str(row[col_phone]).strip() if col_phone and row.get(col_phone) is not None and str(row[col_phone]).lower() != "nan" else None
+            website = str(row[col_website]).strip() if col_website and row.get(col_website) is not None and str(row[col_website]).lower() != "nan" else None
+            category = str(row[col_category]).strip() if col_category and row.get(col_category) is not None and str(row[col_category]).lower() != "nan" else "B2B Lead"
+            service = str(row[col_service]).strip() if col_service and row.get(col_service) is not None and str(row[col_service]).lower() != "nan" else "Digital Services"
+            rating = str(row[col_rating]).strip() if col_rating and row.get(col_rating) is not None and str(row[col_rating]).lower() != "nan" else "4.5"
+            address = str(row[col_address]).strip() if col_address and row.get(col_address) is not None and str(row[col_address]).lower() != "nan" else None
+            area = str(row[col_area]).strip() if col_area and row.get(col_area) is not None and str(row[col_area]).lower() != "nan" else None
+            landmark = str(row[col_landmark]).strip() if col_landmark and row.get(col_landmark) is not None and str(row[col_landmark]).lower() != "nan" else None
+            total_review = str(row[col_reviews]).strip() if col_reviews and row.get(col_reviews) is not None and str(row[col_reviews]).lower() != "nan" else None
+
+            leads_to_insert.append({
+                "bussiness_name": b_name,
+                "bussiness_email": first_email,
+                "bussiness_number": phone,
+                "bussiness_area": area,
+                "rating": rating,
+                "landmark": landmark,
+                "total_review": total_review,
+                "bussiness_website": website,
+                "category": category,
+                "bussiness_address": address,
+                "service": service,
+                "scraped_city": city,
+                "scraped_service": service,
+                "email_status": "pending",
+                "created_at": now_utc
+            })
             if city:
                 cities_inserted.add(city)
             
-        db.commit()
+        if leads_to_insert:
+            db.bulk_insert_mappings(ScrapedLead, leads_to_insert)
+            db.commit()
+
         return {
-            "message": f"Successfully imported {inserted_count} leads into database!",
-            "inserted": inserted_count,
+            "message": f"Successfully imported {len(leads_to_insert)} leads into database!",
+            "inserted": len(leads_to_insert),
             "skipped": skipped_count,
-            "total_rows": total_rows,
+            "total_rows": len(records),
             "cities_count": len(cities_inserted)
         }
         
