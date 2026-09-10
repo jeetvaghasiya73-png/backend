@@ -1,0 +1,21 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 3306,
+    "user": "root",
+    "password": "meet@001",
+    "database_name": "leads"
+  },
+  "scraper": {
+    "cities": [
+      "Ahmedabad"
+    ],
+    "services": [
+      "Interior designer"
+    ],
+    "page_chunk_size": 5,
+    "max_empty_pages_limit": 2,
+    "pagesave_directory": "C:\\Users\\meetv\\OneDrive\\Desktop\\big files\\justdial\\PDP",
+    "max_pages": 5
+  }
+}

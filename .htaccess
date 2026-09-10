@@ -1,0 +1,6 @@
+# Hostinger Cloud / Shared Hosting Python Setup via Phusion Passenger
+PassengerEnabled on
+PassengerAppType python
+PassengerStartupFile app/main.py
+PassengerAppRoot /home/username/public_html/backend
+PassengerPython /home/username/virtualenv/backend/3.11/bin/python
