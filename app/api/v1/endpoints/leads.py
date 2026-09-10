@@ -72,6 +72,25 @@ from app.models.lead import Lead
 class BulkDeleteRequest(BaseModel):
     lead_ids: List[int]
 
+@router.delete("/bulk")
+def delete_all_inbound_leads(
+    db: Session = Depends(get_db),
+    admin_user = Depends(get_current_admin_user)
+):
+    """
+    Delete all inbound leads from database (Admin only).
+    """
+    try:
+        num_deleted = db.query(Lead).delete()
+        db.commit()
+        return {"message": f"Successfully deleted all {num_deleted} inbound leads."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear inbound leads database: {str(e)}"
+        )
+
 @router.post("/bulk-delete")
 def bulk_delete_leads(
     payload: BulkDeleteRequest,
