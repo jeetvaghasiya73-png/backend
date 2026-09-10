@@ -33,15 +33,22 @@ def upload_scraped_leads(
     admin_user = Depends(get_current_admin_user)
 ):
     """
-    Upload an Excel (.xlsx) file containing scraped leads and insert them into the database.
+    Upload a CSV or Excel (.csv, .xlsx, .xls) file containing lead records and insert them into the database.
     Flexible column resolver handles both snake_case and human Excel title columns.
     """
-    if not file.filename.endswith('.xlsx'):
-        raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
+    filename_lower = file.filename.lower() if file.filename else ""
+    if not (filename_lower.endswith('.xlsx') or filename_lower.endswith('.xls') or filename_lower.endswith('.csv')):
+        raise HTTPException(status_code=400, detail="Only .csv, .xlsx, or .xls spreadsheet files are supported")
         
     try:
         contents = file.file.read()
-        df = pd.read_excel(io.BytesIO(contents))
+        if filename_lower.endswith('.csv'):
+            try:
+                df = pd.read_csv(io.BytesIO(contents))
+            except Exception:
+                df = pd.read_csv(io.BytesIO(contents), encoding="latin1")
+        else:
+            df = pd.read_excel(io.BytesIO(contents))
         
         # Replace NaNs with None
         df = df.replace({np.nan: None})
@@ -61,34 +68,37 @@ def upload_scraped_leads(
         seen_emails = set()
         
         for _, row in df.iterrows():
-            raw_email = get_val(row, "bussiness_email", "Business Email", "business_email", "Email", "email")
-            if not raw_email:
-                skipped_count += 1
-                continue # Skip leads without email
+            raw_email = get_val(row, "bussiness_email", "Business Email", "business_email", "Email", "email", "Email Address", "email_address")
+            b_name = get_val(row, "bussiness_name", "Business Name", "business_name", "Name", "name", "Company", "company", "Lead Name", "Title", "title")
             
-            # If multiple emails exist (e.g. info@domain.com; owner@gmail.com), pick the first valid one
-            first_email = raw_email.replace(";", ",").split(",")[0].strip().lower()
-            if "@" not in first_email or first_email in seen_emails or first_email in existing_emails:
+            if not b_name and not raw_email:
                 skipped_count += 1
                 continue
+            
+            first_email = None
+            if raw_email:
+                cleaned_email = raw_email.replace(";", ",").split(",")[0].strip().lower()
+                if "@" in cleaned_email and cleaned_email not in seen_emails and cleaned_email not in existing_emails:
+                    first_email = cleaned_email
+                    seen_emails.add(first_email)
+                    existing_emails.add(first_email)
 
-            seen_emails.add(first_email)
-            existing_emails.add(first_email)
+            if not b_name:
+                b_name = first_email.split("@")[0].title() if first_email else "Direct Prospect"
 
-            b_name = get_val(row, "bussiness_name", "Business Name", "business_name", "Name", "name")
-            city = get_val(row, "scraped_city", "City", "city", "location")
-            phone = get_val(row, "bussiness_number", "Business Number", "business_number", "Phone", "phone")
+            city = get_val(row, "scraped_city", "City", "city", "location", "Location") or "Outreach"
+            phone = get_val(row, "bussiness_number", "Business Number", "business_number", "Phone", "phone", "Mobile", "mobile")
             area = get_val(row, "bussiness_area", "Business Area", "business_area", "Area")
-            rating = get_val(row, "rating", "Rating")
+            rating = get_val(row, "rating", "Rating", "Score", "score") or "4.5"
             landmark = get_val(row, "landmark", "Landmark")
             total_review = get_val(row, "total_review", "Total Reviews", "Total Review", "Reviews")
             building = get_val(row, "building", "Building")
             pincode = get_val(row, "pincode", "Pincode")
-            website = get_val(row, "bussiness_website", "Business Website", "business_website", "Website")
-            category = get_val(row, "category", "Category")
+            website = get_val(row, "bussiness_website", "Business Website", "business_website", "Website", "url", "URL")
+            category = get_val(row, "category", "Category", "Industry", "industry") or "B2B Lead"
             address = get_val(row, "bussiness_address", "Business Address", "business_address", "Address")
-            service = get_val(row, "service", "Services", "Service")
-            scraped_service = get_val(row, "scraped_service", "Scraped Keyword", "Keyword", "scraped_keyword")
+            service = get_val(row, "service", "Services", "Service") or "Digital Services"
+            scraped_service = get_val(row, "scraped_service", "Scraped Keyword", "Keyword", "scraped_keyword") or service
                 
             new_lead = ScrapedLead(
                 bussiness_name=b_name,
@@ -115,7 +125,7 @@ def upload_scraped_leads(
             
         db.commit()
         return {
-            "message": f"Successfully imported {inserted_count} leads from Excel!",
+            "message": f"Successfully imported {inserted_count} leads into database!",
             "inserted": inserted_count,
             "skipped": skipped_count,
             "total_rows": total_rows,
@@ -430,4 +440,54 @@ def inject_test_lead(
     db.commit()
     db.refresh(new_lead)
     return new_lead
+
+
+class ScrapedLeadCreate(BaseModel):
+    bussiness_name: str
+    bussiness_email: Optional[str] = None
+    bussiness_number: Optional[str] = None
+    scraped_city: Optional[str] = None
+    bussiness_website: Optional[str] = None
+    scraped_service: Optional[str] = None
+    category: Optional[str] = None
+    rating: Optional[str] = "4.5"
+
+@router.post("/", response_model=ScrapedLeadOut, status_code=status.HTTP_201_CREATED)
+def create_scraped_lead(
+    lead_in: ScrapedLeadCreate,
+    db: Session = Depends(get_db),
+    admin_user = Depends(get_current_admin_user)
+):
+    """
+    Manually create a new lead record in the database (Admin only).
+    """
+    from datetime import datetime, timezone
+    
+    if lead_in.bussiness_email and lead_in.bussiness_email.strip():
+        existing = db.query(ScrapedLead).filter(
+            func.lower(ScrapedLead.bussiness_email) == lead_in.bussiness_email.strip().lower()
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lead with email '{lead_in.bussiness_email}' already exists in database."
+            )
+
+    new_lead = ScrapedLead(
+        bussiness_name=lead_in.bussiness_name,
+        bussiness_email=lead_in.bussiness_email.strip().lower() if lead_in.bussiness_email and lead_in.bussiness_email.strip() else None,
+        bussiness_number=lead_in.bussiness_number,
+        scraped_city=lead_in.scraped_city or "General",
+        bussiness_website=lead_in.bussiness_website,
+        scraped_service=lead_in.scraped_service or "Custom Service",
+        category=lead_in.category or "B2B Prospect",
+        rating=lead_in.rating or "4.5",
+        email_status="pending",
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(new_lead)
+    db.commit()
+    db.refresh(new_lead)
+    return new_lead
+
 
