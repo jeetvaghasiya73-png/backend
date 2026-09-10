@@ -15,9 +15,26 @@ def create_lead(
     db: Session = Depends(get_db)
 ):
     """
-    Submit a new lead (Public endpoint for prospect inquiries).
+    Submit a new lead (Public endpoint for prospect inquiries) and trigger DB notification.
     """
-    return lead_repo.create(db, obj_in=lead_in.model_dump())
+    lead = lead_repo.create(db, obj_in=lead_in.model_dump())
+    try:
+        from app.models.notification import Notification
+        from datetime import datetime, timezone
+        notif = Notification(
+            title="New Inbound Lead",
+            message=f"{lead.name or 'Prospect'} requested services ({lead.company or 'Direct Inbound'}).",
+            type="lead",
+            read=False,
+            link="/admin/dashboard/leads",
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(notif)
+        db.commit()
+    except Exception as e:
+        print("Failed to auto-create lead notification:", e)
+        
+    return lead
 
 @router.get("/", response_model=List[LeadOut])
 def read_leads(

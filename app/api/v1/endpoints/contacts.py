@@ -15,9 +15,28 @@ def create_contact(
     db: Session = Depends(get_db)
 ):
     """
-    Submit a new contact message (Public endpoint).
+    Submit a new contact message (Public endpoint) and trigger backend notification.
     """
-    return contact_repo.create(db, obj_in=contact_in.model_dump())
+    contact = contact_repo.create(db, obj_in=contact_in.model_dump())
+    try:
+        from app.models.notification import Notification
+        from datetime import datetime, timezone
+        msg_text = contact.message or ""
+        msg_snippet = msg_text[:50] + "..." if len(msg_text) > 50 else (msg_text or "New contact message")
+        notif = Notification(
+            title="New Contact Inquiry",
+            message=f"{contact.name or 'Visitor'}: \"{msg_snippet}\"",
+            type="inquiry",
+            read=False,
+            link="/admin/dashboard/contacts",
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(notif)
+        db.commit()
+    except Exception as e:
+        print("Failed to auto-create contact notification:", e)
+
+    return contact
 
 @router.get("/", response_model=List[ContactOut])
 def read_contacts(

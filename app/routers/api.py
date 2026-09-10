@@ -13,7 +13,8 @@ from app.api.v1.endpoints import (
     api_tokens,
     public,
     scraped_leads,
-    email
+    email,
+    notifications
 )
 
 api_router = APIRouter()
@@ -31,4 +32,5 @@ api_router.include_router(api_tokens.router, prefix="/api-tokens", tags=["api_to
 api_router.include_router(public.router, prefix="/public", tags=["public"])
 api_router.include_router(scraped_leads.router, prefix="/scraped-leads", tags=["scraped_leads"])
 api_router.include_router(email.router, prefix="/email", tags=["email"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 

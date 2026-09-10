@@ -15,3 +15,4 @@ from app.models.jwt_usage import JwtTokenUsage
 from app.models.campaign import Campaign
 from app.models.email_message import EmailMessage
 from app.models.followup import FollowUp
+from app.models.notification import Notification

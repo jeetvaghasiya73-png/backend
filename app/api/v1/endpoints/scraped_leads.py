@@ -142,6 +142,18 @@ def upload_scraped_leads(
             
         if leads_to_insert:
             db.bulk_insert_mappings(ScrapedLead, leads_to_insert)
+            try:
+                from app.models.notification import Notification
+                db.add(Notification(
+                    title="Bulk Excel Import Completed",
+                    message=f"Imported {len(leads_to_insert)} scraped leads into database ({len(cities_inserted)} cities).",
+                    type="lead",
+                    read=False,
+                    link="/admin/dashboard/leads",
+                    created_at=now_utc
+                ))
+            except Exception as notif_err:
+                print("Failed to create upload notification:", notif_err)
             db.commit()
 
         return {
@@ -506,6 +518,18 @@ def create_scraped_lead(
         created_at=datetime.now(timezone.utc)
     )
     db.add(new_lead)
+    try:
+        from app.models.notification import Notification
+        db.add(Notification(
+            title="New Lead Created",
+            message=f"Lead '{new_lead.bussiness_name}' added to CRM database.",
+            type="lead",
+            read=False,
+            link="/admin/dashboard/leads",
+            created_at=datetime.now(timezone.utc)
+        ))
+    except Exception as notif_err:
+        print("Failed to record lead creation notification:", notif_err)
     db.commit()
     db.refresh(new_lead)
     return new_lead
