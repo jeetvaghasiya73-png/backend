@@ -725,6 +725,8 @@ class EmailOutreachWorker:
                             logger.info(f"Auto-reply sent successfully to lead {lead.id}")
                         else:
                             logger.error(f"Failed to auto-send reply: {smtp_err}")
+                    except Exception as auto_err:
+                        logger.error(f"Failed to generate or send auto-reply: {auto_err}")
             processed_results.append({
                 "lead_id": lead.id,
                 "business_name": lead.bussiness_name,
