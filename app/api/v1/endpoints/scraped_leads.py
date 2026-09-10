@@ -296,7 +296,7 @@ def get_scraped_leads_stats(
 @router.get("/")
 def get_scraped_leads(
     page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(20, ge=1, le=500, description="Items per page"),
+    limit: int = Query(20, ge=1, le=10000, description="Items per page"),
     search: Optional[str] = Query(None, description="Search query"),
     city: Optional[str] = Query(None, description="Filter by city"),
     keyword: Optional[str] = Query(None, description="Filter by scraped keyword"),
