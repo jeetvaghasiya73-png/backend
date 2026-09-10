@@ -9,8 +9,11 @@ from app.database.session import engine, SessionLocal, Base
 from app.models.base import Base as _  # Force import of all models
 from app.routers.api import api_router
 
-# Auto-create tables on startup
-Base.metadata.create_all(bind=engine)
+# Auto-create tables on startup (resilient)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as db_err:
+    print(f"Table creation warning on module load: {db_err}")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -83,87 +86,75 @@ def read_root():
 
 @app.on_event("startup")
 def startup_event():
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Startup create_all notice: {e}")
+
     db = SessionLocal()
     try:
         # Automatic migration checks for scraped_leads and campaigns
         from sqlalchemy import text, inspect
         inspector = inspect(db.bind)
+        dialect_name = db.bind.dialect.name if (db.bind and hasattr(db.bind, "dialect")) else "sqlite"
+        ts_type = "TIMESTAMP" if dialect_name == "postgresql" else "TIMESTAMP"
         
         # Check and migrate scraped_leads columns
         if "scraped_leads" in inspector.get_table_names():
             columns = [col["name"] for col in inspector.get_columns("scraped_leads")]
-            if "email_status" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN email_status VARCHAR(50) DEFAULT 'pending'"))
-                db.commit()
-                print("Migration: Added email_status column to scraped_leads")
-            if "email_sent_at" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN email_sent_at DATETIME NULL"))
-                db.commit()
-                print("Migration: Added email_sent_at column to scraped_leads")
-            if "email_error" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN email_error TEXT NULL"))
-                db.commit()
-                print("Migration: Added email_error column to scraped_leads")
-            if "email_subject" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN email_subject VARCHAR(255) NULL"))
-                db.commit()
-                print("Migration: Added email_subject column to scraped_leads")
-            if "email_body" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN email_body TEXT NULL"))
-                db.commit()
-                print("Migration: Added email_body column to scraped_leads")
-            if "personalization_status" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN personalization_status VARCHAR(50) DEFAULT 'pending'"))
-                db.commit()
-                print("Migration: Added personalization_status column to scraped_leads")
-            if "last_email_at" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN last_email_at DATETIME NULL"))
-                db.commit()
-                print("Migration: Added last_email_at column to scraped_leads")
-            if "next_followup_at" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN next_followup_at DATETIME NULL"))
-                db.commit()
-                print("Migration: Added next_followup_at column to scraped_leads")
-            if "followup_count" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN followup_count INTEGER DEFAULT 0"))
-                db.commit()
-                print("Migration: Added followup_count column to scraped_leads")
-            if "reply_status" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN reply_status VARCHAR(50) DEFAULT 'unprocessed'"))
-                db.commit()
-                print("Migration: Added reply_status column to scraped_leads")
-            if "unsubscribe" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN unsubscribe BOOLEAN DEFAULT FALSE"))
-                db.commit()
-                print("Migration: Added unsubscribe column to scraped_leads")
-            if "bounced" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN bounced BOOLEAN DEFAULT FALSE"))
-                db.commit()
-                print("Migration: Added bounced column to scraped_leads")
-            if "campaign_id" not in columns:
-                db.execute(text("ALTER TABLE scraped_leads ADD COLUMN campaign_id INTEGER NULL REFERENCES campaigns(id) ON DELETE SET NULL"))
-                db.commit()
-                print("Migration: Added campaign_id column to scraped_leads")
+            migrations = [
+                ("email_status", "ALTER TABLE scraped_leads ADD COLUMN email_status VARCHAR(50) DEFAULT 'pending'"),
+                ("email_sent_at", f"ALTER TABLE scraped_leads ADD COLUMN email_sent_at {ts_type} NULL"),
+                ("email_error", "ALTER TABLE scraped_leads ADD COLUMN email_error TEXT NULL"),
+                ("email_subject", "ALTER TABLE scraped_leads ADD COLUMN email_subject VARCHAR(255) NULL"),
+                ("email_body", "ALTER TABLE scraped_leads ADD COLUMN email_body TEXT NULL"),
+                ("personalization_status", "ALTER TABLE scraped_leads ADD COLUMN personalization_status VARCHAR(50) DEFAULT 'pending'"),
+                ("last_email_at", f"ALTER TABLE scraped_leads ADD COLUMN last_email_at {ts_type} NULL"),
+                ("next_followup_at", f"ALTER TABLE scraped_leads ADD COLUMN next_followup_at {ts_type} NULL"),
+                ("followup_count", "ALTER TABLE scraped_leads ADD COLUMN followup_count INTEGER DEFAULT 0"),
+                ("reply_status", "ALTER TABLE scraped_leads ADD COLUMN reply_status VARCHAR(50) DEFAULT 'unprocessed'"),
+                ("unsubscribe", "ALTER TABLE scraped_leads ADD COLUMN unsubscribe BOOLEAN DEFAULT FALSE"),
+                ("bounced", "ALTER TABLE scraped_leads ADD COLUMN bounced BOOLEAN DEFAULT FALSE"),
+                ("campaign_id", "ALTER TABLE scraped_leads ADD COLUMN campaign_id INTEGER NULL REFERENCES campaigns(id) ON DELETE SET NULL")
+            ]
+            for col_name, sql in migrations:
+                if col_name not in columns:
+                    try:
+                        db.execute(text(sql))
+                        db.commit()
+                        print(f"Migration: Added {col_name} column to scraped_leads")
+                    except Exception as col_err:
+                        db.rollback()
+                        print(f"Migration notice for {col_name}: {col_err}")
 
         # Automatic migration checks for users table
         if "users" in inspector.get_table_names():
             user_columns = [col["name"] for col in inspector.get_columns("users")]
             if "is_main_admin" not in user_columns:
-                db.execute(text("ALTER TABLE users ADD COLUMN is_main_admin BOOLEAN DEFAULT FALSE"))
-                db.commit()
-                print("Migration: Added is_main_admin column to users")
+                try:
+                    db.execute(text("ALTER TABLE users ADD COLUMN is_main_admin BOOLEAN DEFAULT FALSE"))
+                    db.commit()
+                    print("Migration: Added is_main_admin column to users")
+                except Exception as col_err:
+                    db.rollback()
 
         # Automatic migration checks for campaigns table
         if "campaigns" in inspector.get_table_names():
             campaign_columns = [col["name"] for col in inspector.get_columns("campaigns")]
             if "target_city" not in campaign_columns:
-                db.execute(text("ALTER TABLE campaigns ADD COLUMN target_city VARCHAR(100) NULL"))
-                db.commit()
-                print("Migration: Added target_city column to campaigns")
+                try:
+                    db.execute(text("ALTER TABLE campaigns ADD COLUMN target_city VARCHAR(100) NULL"))
+                    db.commit()
+                    print("Migration: Added target_city column to campaigns")
+                except Exception as col_err:
+                    db.rollback()
             if "target_service" not in campaign_columns:
-                db.execute(text("ALTER TABLE campaigns ADD COLUMN target_service VARCHAR(100) NULL"))
-                db.commit()
-                print("Migration: Added target_service column to campaigns")
+                try:
+                    db.execute(text("ALTER TABLE campaigns ADD COLUMN target_service VARCHAR(100) NULL"))
+                    db.commit()
+                    print("Migration: Added target_service column to campaigns")
+                except Exception as col_err:
+                    db.rollback()
 
         # Ensure high-performance indexes exist on critical filter and sorting columns
         index_queries = [
@@ -182,20 +173,43 @@ def startup_event():
         for idx_sql in index_queries:
             try:
                 db.execute(text(idx_sql))
+                db.commit()
             except Exception:
-                pass
-        db.commit()
+                db.rollback()
 
-        seed_admin_user(db)
-        seed_services(db)
-        seed_faqs(db)
-        seed_testimonials(db)
-        seed_portfolio(db)
-        seed_seo_settings(db)
+        try:
+            seed_admin_user(db)
+        except Exception as err:
+            print(f"Seed admin notice: {err}")
+        try:
+            seed_services(db)
+        except Exception as err:
+            print(f"Seed services notice: {err}")
+        try:
+            seed_faqs(db)
+        except Exception as err:
+            print(f"Seed faqs notice: {err}")
+        try:
+            seed_testimonials(db)
+        except Exception as err:
+            print(f"Seed testimonials notice: {err}")
+        try:
+            seed_portfolio(db)
+        except Exception as err:
+            print(f"Seed portfolio notice: {err}")
+        try:
+            seed_seo_settings(db)
+        except Exception as err:
+            print(f"Seed seo notice: {err}")
         
         # Start the background email worker
-        from app.services.email_worker import email_worker
-        email_worker.start()
+        try:
+            from app.services.email_worker import email_worker
+            email_worker.start()
+        except Exception as worker_err:
+            print(f"Worker start notice: {worker_err}")
+    except Exception as startup_err:
+        print(f"General startup event notice: {startup_err}")
     finally:
         db.close()
 
