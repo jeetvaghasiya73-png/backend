@@ -12,6 +12,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=List[UserOut])
+@router.get("/admin-users", response_model=List[UserOut])
 def read_users(
     skip: int = 0,
     limit: int = 100,
@@ -25,6 +26,7 @@ def read_users(
 
 
 @router.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post("/admin-users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(
     user_in: UserCreateAdmin,
     db: Session = Depends(get_db),
@@ -57,6 +59,7 @@ def create_user(
 
 
 @router.patch("/{user_id}", response_model=UserOut)
+@router.patch("/admin-users/{user_id}", response_model=UserOut)
 def update_user(
     user_id: int,
     user_in: UserUpdate,
@@ -108,6 +111,7 @@ def update_user(
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/admin-users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
