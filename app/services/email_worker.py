@@ -602,12 +602,37 @@ class EmailOutreachWorker:
         """
         processed_results = []
         for reply in unread_replies:
-            sender_email = reply["sender"]
+            sender_email = (reply["sender"] or "").strip().lower()
             
             # Find lead associated with sender email
             lead = db.query(ScrapedLead).filter(
-                func.lower(ScrapedLead.bussiness_email) == sender_email.lower()
+                func.lower(ScrapedLead.bussiness_email) == sender_email
             ).first()
+
+            # If direct match fails in Test Mode (or reply comes from configured test email),
+            # match the reply to the lead that received the most recent cold email.
+            if not lead:
+                test_email = (getattr(settings, "SMTP_TO_TEST_EMAIL", "") or "").strip().lower()
+                from_email = (getattr(settings, "SMTP_FROM_EMAIL", "") or "").strip().lower()
+                imap_user = (getattr(settings, "IMAP_USERNAME", "") or "").strip().lower()
+                
+                is_test_sender = (
+                    settings.EMAIL_TEST_MODE or
+                    (test_email and sender_email == test_email) or
+                    (from_email and sender_email == from_email) or
+                    (imap_user and sender_email == imap_user)
+                )
+
+                if is_test_sender:
+                    lead = db.query(ScrapedLead).filter(
+                        ScrapedLead.email_status == "sent"
+                    ).order_by(ScrapedLead.last_email_at.desc()).first()
+
+                    if not lead:
+                        lead = db.query(ScrapedLead).order_by(ScrapedLead.id.desc()).first()
+
+                    if lead:
+                        logger.info(f"Test Mode reply mapping: Matched sender <{sender_email}> to lead ID {lead.id} ({lead.bussiness_name})")
 
             if not lead:
                 logger.info(f"Received reply from <{sender_email}>, but no matching lead found in database. Skipping.")
@@ -744,8 +769,14 @@ class EmailOutreachWorker:
         Polls IMAP mail folder, matches senders to leads, classifies intent,
         cancels future followups, suppresses unsubscribes, and drafts auto-replies.
         """
-        unread_replies = imap_service.fetch_new_replies()
-        if unread_replies:
-            await self.process_replies_batch(db, unread_replies)
+        try:
+            unread_replies = imap_service.fetch_new_replies()
+            if unread_replies:
+                processed = await self.process_replies_batch(db, unread_replies)
+                if processed:
+                    await self.add_log(f"📩 Inbox: Received & classified {len(processed)} prospect reply(ies)!")
+                    await self.broadcast_activity()
+        except Exception as e:
+            logger.error(f"Error checking IMAP replies in background worker: {str(e)}")
 
 email_worker = EmailOutreachWorker()
