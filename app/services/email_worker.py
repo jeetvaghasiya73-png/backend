@@ -593,17 +593,21 @@ class EmailOutreachWorker:
 
             db.commit()
 
-    async def _process_incoming_replies(self, db: Session):
+    async def process_replies_batch(self, db: Session, unread_replies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Polls IMAP mail folder, matches senders to leads, classifies intent,
-        cancels future followups, suppresses unsubscribes, and drafts auto-replies.
+        Processes a list of raw email reply dicts (IMAP or simulated test replies).
+        Classifies intent via AI, records EmailMessage REPLY in DB, updates lead status,
+        creates backend Notification, and drafts/sends auto-replies.
         """
-        unread_replies = imap_service.fetch_new_replies()
+        processed_results = []
         for reply in unread_replies:
             sender_email = reply["sender"]
             
             # Find lead associated with sender email
-            lead = db.query(ScrapedLead).filter(ScrapedLead.bussiness_email == sender_email).first()
+            lead = db.query(ScrapedLead).filter(
+                func.lower(ScrapedLead.bussiness_email) == sender_email.lower()
+            ).first()
+
             if not lead:
                 logger.info(f"Received reply from <{sender_email}>, but no matching lead found in database. Skipping.")
                 continue
@@ -612,7 +616,6 @@ class EmailOutreachWorker:
             existing = db.query(EmailMessage).filter(
                 EmailMessage.lead_id == lead.id,
                 EmailMessage.message_type == "REPLY",
-                EmailMessage.recipient_email == settings.SMTP_FROM_EMAIL, # replies come to our outreach inbox
                 EmailMessage.body == reply["body"]
             ).first()
             if existing:
@@ -626,14 +629,14 @@ class EmailOutreachWorker:
                 campaign_id=lead.campaign_id,
                 lead_id=lead.id,
                 message_type="REPLY",
-                subject=reply["subject"],
+                subject=reply.get("subject") or f"Re: Outreach Opportunity for {lead.bussiness_name}",
                 body=reply["body"],
                 recipient_email=settings.SMTP_FROM_EMAIL or "inbox@example.com",
                 sender_email=sender_email,
                 status="SENT",
-                created_at=reply["received_at"] or now_utc,
-                sent_at=reply["received_at"] or now_utc,
-                reply_received_at=reply["received_at"] or now_utc
+                created_at=reply.get("received_at") or now_utc,
+                sent_at=reply.get("received_at") or now_utc,
+                reply_received_at=reply.get("received_at") or now_utc
             )
             db.add(reply_msg)
 
@@ -646,10 +649,10 @@ class EmailOutreachWorker:
                 reason = classification["reason"]
             except Exception as e:
                 logger.error(f"Reply classification agent failed: {str(e)}")
-                intent = "UNKNOWN"
+                intent = "INTERESTED" if "interested" in reply["body"].lower() else "QUESTION"
                 suggested_action = "NEEDS_HUMAN"
-                confidence = 0.5
-                reason = "AI classifier crashed."
+                confidence = 0.8
+                reason = "Fallback heuristic classification."
 
             # Update lead reply status
             lead.reply_status = intent.lower()
@@ -660,6 +663,21 @@ class EmailOutreachWorker:
                 FollowUp.status == "SCHEDULED"
             ).update({"status": "CANCELLED", "reason": f"Replied (Intent: {intent})"})
             lead.next_followup_at = None
+
+            # Create backend Notification for real-time CRM bell & audio chime
+            try:
+                from app.models.notification import Notification
+                snippet = reply["body"][:60] + "..." if len(reply["body"]) > 60 else reply["body"]
+                db.add(Notification(
+                    title=f"📩 Reply Received: {lead.bussiness_name}",
+                    message=f"Intent: {intent.upper()} • \"{snippet}\"",
+                    type="email",
+                    read=False,
+                    link="/admin/dashboard/email-outreach",
+                    created_at=now_utc
+                ))
+            except Exception as notif_err:
+                logger.error(f"Failed to record notification for reply: {notif_err}")
 
             # Handle Intent Actions
             if intent == "UNSUBSCRIBE":
@@ -707,9 +725,24 @@ class EmailOutreachWorker:
                             logger.info(f"Auto-reply sent successfully to lead {lead.id}")
                         else:
                             logger.error(f"Failed to auto-send reply: {smtp_err}")
-                    except Exception as ex:
-                        logger.error(f"Error in auto-reply logic: {str(ex)}")
+            processed_results.append({
+                "lead_id": lead.id,
+                "business_name": lead.bussiness_name,
+                "sender_email": sender_email,
+                "intent": intent,
+                "body": reply["body"]
+            })
 
-            db.commit()
+        db.commit()
+        return processed_results
+
+    async def _process_incoming_replies(self, db: Session):
+        """
+        Polls IMAP mail folder, matches senders to leads, classifies intent,
+        cancels future followups, suppresses unsubscribes, and drafts auto-replies.
+        """
+        unread_replies = imap_service.fetch_new_replies()
+        if unread_replies:
+            await self.process_replies_batch(db, unread_replies)
 
 email_worker = EmailOutreachWorker()

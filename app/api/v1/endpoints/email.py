@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, case
+from pydantic import BaseModel
 
 from app.dependencies.database import get_db
 from app.dependencies.auth import get_current_admin_user
@@ -542,5 +543,131 @@ def clear_sender_logs(
     """Clear the active logger queue in the outreach worker."""
     email_worker.logs = []
     return {"status": "success"}
+
+
+class SimulateReplyRequest(BaseModel):
+    lead_id: Optional[int] = None
+    reply_text: Optional[str] = None
+    subject: Optional[str] = None
+
+@router.post("/replies/check")
+async def check_email_replies(
+    db: Session = Depends(get_db),
+    admin_user = Depends(get_current_admin_user)
+):
+    """
+    Check for incoming email replies.
+    In Production Mode (with IMAP credentials): Fetches real IMAP unread messages.
+    In Test Mode (or unconfigured IMAP): Generates simulated test replies for sent leads to test AI classification & notifications.
+    """
+    from app.core.config import settings
+    from app.services.imap_service import imap_service
+    
+    is_test_mode = settings.EMAIL_TEST_MODE or not (settings.IMAP_HOST and settings.IMAP_USERNAME and settings.IMAP_PASSWORD and "example.com" not in settings.IMAP_HOST)
+    
+    if not is_test_mode:
+        unread = imap_service.fetch_new_replies()
+        processed = await email_worker.process_replies_batch(db, unread) if unread else []
+        return {
+            "status": "success",
+            "mode": "production",
+            "imap_host": settings.IMAP_HOST,
+            "new_replies_count": len(processed),
+            "processed_replies": processed
+        }
+
+    # --- Test Mode Reply Generator ---
+    target_lead = db.query(ScrapedLead).filter(
+        ScrapedLead.bussiness_email.isnot(None),
+        ScrapedLead.bussiness_email != "",
+        or_(ScrapedLead.reply_status == "unprocessed", ScrapedLead.reply_status == None)
+    ).order_by(ScrapedLead.id.desc()).first()
+
+    if not target_lead:
+        target_lead = db.query(ScrapedLead).filter(
+            ScrapedLead.bussiness_email.isnot(None),
+            ScrapedLead.bussiness_email != ""
+        ).first()
+
+    if not target_lead:
+        return {
+            "status": "success",
+            "mode": "test",
+            "message": "No leads found in database to simulate test reply for.",
+            "new_replies_count": 0,
+            "processed_replies": []
+        }
+
+    import random
+    test_reply_samples = [
+        f"Hi Nexora AI team, we received your email regarding {target_lead.bussiness_name}. We are interested in your web development & lead automation services! Could you please share pricing and portfolio details?",
+        f"Hello, thanks for reaching out to {target_lead.bussiness_name}. Can you schedule a call with us next week to discuss custom workflow automations?",
+        f"Hi! We'd like to learn more about your SEO and Google Maps ranking services for {target_lead.bussiness_name}. What is the timeline for onboarding?"
+    ]
+    
+    sample_text = random.choice(test_reply_samples)
+    now_utc = datetime.now(timezone.utc)
+    
+    simulated_reply = [{
+        "sender": target_lead.bussiness_email,
+        "sender_name": target_lead.bussiness_name or "Prospect",
+        "subject": f"Re: Digital Solutions for {target_lead.bussiness_name}",
+        "body": sample_text,
+        "received_at": now_utc
+    }]
+
+    processed = await email_worker.process_replies_batch(db, simulated_reply)
+    
+    return {
+        "status": "success",
+        "mode": "test",
+        "message": f"Generated simulated test reply for lead '{target_lead.bussiness_name}' ({target_lead.bussiness_email})",
+        "new_replies_count": len(processed),
+        "processed_replies": processed
+    }
+
+@router.post("/replies/simulate")
+async def simulate_custom_email_reply(
+    payload: SimulateReplyRequest,
+    db: Session = Depends(get_db),
+    admin_user = Depends(get_current_admin_user)
+):
+    """
+    Manually simulate a prospect email reply to test AI classification, thread state, and auto-reply dispatch.
+    """
+    target_lead = None
+    if payload.lead_id:
+        target_lead = db.query(ScrapedLead).filter(ScrapedLead.id == payload.lead_id).first()
+    
+    if not target_lead:
+        target_lead = db.query(ScrapedLead).filter(
+            ScrapedLead.bussiness_email.isnot(None),
+            ScrapedLead.bussiness_email != ""
+        ).order_by(ScrapedLead.id.desc()).first()
+
+    if not target_lead:
+        raise HTTPException(status_code=400, detail="No valid lead found in database to simulate email reply.")
+
+    body_text = payload.reply_text or f"Hi! I am interested in Nexora AI digital services for {target_lead.bussiness_name}. Please send pricing."
+    subj_text = payload.subject or f"Re: Outreach Opportunity for {target_lead.bussiness_name}"
+    now_utc = datetime.now(timezone.utc)
+
+    simulated = [{
+        "sender": target_lead.bussiness_email,
+        "sender_name": target_lead.bussiness_name or "Prospect",
+        "subject": subj_text,
+        "body": body_text,
+        "received_at": now_utc
+    }]
+
+    processed = await email_worker.process_replies_batch(db, simulated)
+    return {
+        "status": "success",
+        "lead_id": target_lead.id,
+        "lead_name": target_lead.bussiness_name,
+        "lead_email": target_lead.bussiness_email,
+        "processed_count": len(processed),
+        "processed": processed
+    }
 
 
