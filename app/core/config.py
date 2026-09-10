@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     AUTONOMOUS_DELAY_MIN: int = int(os.getenv("AUTONOMOUS_DELAY_MIN", "30"))
     AUTONOMOUS_DELAY_MAX: int = int(os.getenv("AUTONOMOUS_DELAY_MAX", "90"))
 
+    # Website URL for outreach emails and redirects
+    WEBSITE_URL: str = os.getenv("WEBSITE_URL", "https://nexora-meet-b4aa.vercel.app")
+
     # CORS Origins
     CORS_ORIGINS: List[str] = [
         "*",

@@ -17,9 +17,9 @@ def has_chinese_or_non_english(text: str) -> bool:
 
 def build_html_email(lead: Any, pitch_text: str, has_website: bool) -> str:
     """
-    Builds a beautiful, responsive, and mobile-friendly HTML email template.
-    Injects scraped lead data and AI-generated pitch text (with bullet point parsing).
-    Directs customers to website CTA button to view our work.
+    Builds an ultra-premium, responsive, and mobile-friendly HTML email template.
+    Injects scraped lead data and AI-generated pitch text with bulletproof single-line CTA button & arrow alignment.
+    Directs prospect to https://nexora-meet-b4aa.vercel.app/
     """
     import html as html_lib
     import re
@@ -31,6 +31,9 @@ def build_html_email(lead: Any, pitch_text: str, has_website: bool) -> str:
     website = html_lib.escape(lead.bussiness_website or "")
     rating = html_lib.escape(str(lead.rating or ""))
     reviews = html_lib.escape(str(lead.total_review or "0"))
+
+    # Site redirect URL
+    site_url = html_lib.escape(getattr(settings, "WEBSITE_URL", "https://nexora-meet-b4aa.vercel.app")).rstrip("/") + "/"
 
     # Convert pitch text into styled HTML blocks (paragraphs and lists)
     escaped_pitch = html_lib.escape(pitch_text)
@@ -56,12 +59,11 @@ def build_html_email(lead: Any, pitch_text: str, has_website: bool) -> str:
                 break
                 
         if is_list:
-            ul_style = "margin:0 0 16px 0;padding-left:20px;font-size:14px;line-height:1.6;color:#334155;font-family:sans-serif;"
+            ul_style = "margin:0 0 18px 0;padding-left:16px;font-size:14px;line-height:1.65;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
             li_style = "margin:0 0 8px 0;color:#334155;"
             list_html = f'<ul style="{ul_style}">'
             for line in lines:
                 clean_line = line.strip()
-                # Strip list prefixes
                 for prefix in ["- ", "* ", "• ", "-", "*", "•"]:
                     if clean_line.startswith(prefix):
                         clean_line = clean_line[len(prefix):].strip()
@@ -70,54 +72,53 @@ def build_html_email(lead: Any, pitch_text: str, has_website: bool) -> str:
             list_html += '</ul>'
             pitch_html += list_html
         else:
-            # Join lines with a single space to restore normal wrapping
             paragraph_text = " ".join(lines)
-            pitch_html += f'<p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;color:#334155;font-family:sans-serif;">{paragraph_text}</p>'
+            pitch_html += f'<p style="margin:0 0 18px 0;font-size:15px;line-height:1.65;color:#334155;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;">{paragraph_text}</p>'
 
     # Services to highlight
     if has_website:
         services_list = [
-            ("🔍", "SEO & Search Rankings", "Boost your Google visibility and organic traffic"),
-            ("⚡", "WhatsApp & Workflow Automations", "Automate customer support, lead flows & operations"),
-            ("📊", "Web & App Scraping", "Extract competitive data and build custom Scraper APIs"),
-            ("🔧", "Web Dev Upgrades", "Modernize your site with faster, premium UI/UX"),
+            ("🔍", "SEO & Google Search Rankings", "Boost your local search visibility and organic customer traffic"),
+            ("⚡", "WhatsApp & Lead Flow Automations", "Automate customer support, booking inquiries & operations"),
+            ("📊", "Web & App Scraping APIs", "Extract competitive market data and build custom data scrapers"),
+            ("🔧", "Modern UI/UX Web Upgrades", "Upgrade your existing site into a fast, high-converting experience"),
         ]
     else:
         services_list = [
-            ("🌐", "Modern Website Design", "Fast, mobile-friendly site that builds trust"),
-            ("📈", "Local SEO Setup", "Rank on Google Maps and local searches from day one"),
-            ("💬", "WhatsApp Business Setup", "Automated customer messaging and lead capture"),
-            ("🎨", "Free Homepage Mockup", "We'll design a draft homepage for your business — free"),
+            ("🌐", "Modern High-Speed Website Design", "Mobile-first, high-converting website built for your brand"),
+            ("📈", "Local Search & Google Maps Setup", "Rank on Google Maps and local customer searches from day one"),
+            ("💬", "Automated WhatsApp Lead Capture", "Instant customer response system and lead management"),
+            ("🎨", "Free Homepage Concept Design", "We'll build a live homepage draft for your business — free"),
         ]
 
     services_html = ""
     for icon, title, desc in services_list:
         services_html += f"""
         <tr>
-            <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;">
+            <td style="padding:12px 18px;border-bottom:1px solid #f1f5f9;">
                 <table border="0" cellpadding="0" cellspacing="0" width="100%">
                     <tr>
-                        <td width="36" valign="top" style="font-size:20px;padding-right:12px;">{icon}</td>
+                        <td width="36" valign="top" style="font-size:22px;padding-right:12px;">{icon}</td>
                         <td>
-                            <p style="margin:0;font-size:14px;font-weight:700;color:#1e293b;font-family:sans-serif;">{title}</p>
-                            <p style="margin:2px 0 0 0;font-size:12px;color:#64748b;line-height:1.4;font-family:sans-serif;">{desc}</p>
+                            <p style="margin:0;font-size:14px;font-weight:700;color:#0f172a;font-family:sans-serif;">{title}</p>
+                            <p style="margin:3px 0 0 0;font-size:12px;color:#64748b;line-height:1.45;font-family:sans-serif;">{desc}</p>
                         </td>
                     </tr>
                 </table>
             </td>
         </tr>"""
 
-    # Lead context badge
+    # Lead context badge with left border accent
     website_link_html = ""
     if website and website.lower() not in ('not specified', 'none'):
-        website_link_html = f'<br/>🌐 <a href="{website}" style="color:#2563eb;text-decoration:none;word-break:break-all;font-size:12px;">{website}</a>'
+        website_link_html = f'<br/>🌐 <a href="{website}" style="color:#2563eb;text-decoration:none;word-break:break-all;font-size:12px;font-weight:600;">{website}</a>'
 
     context_badge = f"""
-    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border-radius:10px;margin-bottom:24px;border:1px solid #e2e8f0;width:100% !important;">
+    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border-radius:12px;margin-bottom:24px;border:1px solid #e2e8f0;border-left:4px solid #6366f1;width:100% !important;">
         <tr>
-            <td style="padding:16px 20px;">
-                <p style="margin:0 0 6px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;font-weight:700;font-family:sans-serif;">PREPARED FOR</p>
-                <p style="margin:0 0 6px 0;font-size:16px;font-weight:800;color:#0f172a;font-family:sans-serif;line-height:1.2;">{biz_name}</p>
+            <td style="padding:18px 20px;">
+                <p style="margin:0 0 6px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6366f1;font-weight:800;font-family:sans-serif;">PREPARED EXCLUSIVELY FOR</p>
+                <p style="margin:0 0 6px 0;font-size:17px;font-weight:800;color:#0f172a;font-family:sans-serif;line-height:1.2;">{biz_name}</p>
                 <p style="margin:0;font-size:12px;color:#64748b;font-family:sans-serif;line-height:1.5;word-break:break-word;">
                     📍 {city} &nbsp;&bull;&nbsp; 🏷️ {service}
                     {'&nbsp;&bull;&nbsp; ⭐ ' + rating + ' (' + reviews + ' reviews)' if rating else ''}
@@ -128,8 +129,7 @@ def build_html_email(lead: Any, pitch_text: str, has_website: bool) -> str:
     </table>"""
 
     year = datetime.now().year
-    sender_name = html_lib.escape(settings.SMTP_FROM_NAME or "Nexora AI")
-    site_url = html_lib.escape(getattr(settings, "WEBSITE_URL", "https://nexora.ai"))
+    sender_name = html_lib.escape(settings.SMTP_FROM_NAME or "Nexora AI Team")
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -139,86 +139,84 @@ def build_html_email(lead: Any, pitch_text: str, has_website: bool) -> str:
     <title>Partnership Opportunity — {biz_name}</title>
     <style>
         @media only screen and (max-width: 600px) {{
-            .main-table {{
-                padding: 12px 6px !important;
-            }}
-            .content-cell {{
-                padding: 20px 14px 8px 14px !important;
-            }}
-            .services-cell {{
-                padding: 0 14px 20px 14px !important;
-            }}
-            .cta-cell {{
-                padding: 8px 14px 20px 14px !important;
-            }}
-            .cta-button {{
-                width: 100% !important;
-                box-sizing: border-box !important;
-                text-align: center !important;
-                padding: 14px 20px !important;
-            }}
-            .footer-cell {{
-                padding: 16px 14px 20px 14px !important;
-            }}
+            .main-table {{ padding: 12px 4px !important; }}
+            .content-cell {{ padding: 20px 16px 8px 16px !important; }}
+            .services-cell {{ padding: 0 16px 20px 16px !important; }}
+            .cta-cell {{ padding: 12px 16px 24px 16px !important; }}
+            .footer-cell {{ padding: 18px 16px 20px 16px !important; }}
         }}
     </style>
 </head>
-<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
-    <table border="0" cellpadding="0" cellspacing="0" width="100%" class="main-table" style="background-color:#f1f5f9;padding:24px 8px;">
+<body style="margin:0;padding:0;background-color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+    <table border="0" cellpadding="0" cellspacing="0" width="100%" class="main-table" style="background-color:#0f172a;padding:32px 8px;">
         <tr><td align="center">
             <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;">
 
-                <!-- Logo Bar -->
-                <tr><td style="padding:0 0 16px 0;" align="center">
+                <!-- Header Brand Banner -->
+                <tr><td style="padding:0 0 20px 0;" align="center">
                     <a href="{site_url}" target="_blank" style="text-decoration:none;">
-                        <span style="font-size:22px;font-weight:900;color:#1e3a8a;letter-spacing:-0.03em;font-family:sans-serif;">NEXORA<span style="color:#2563eb;">AI</span></span>
+                        <span style="font-size:24px;font-weight:900;color:#ffffff;letter-spacing:-0.03em;font-family:sans-serif;">NEXORA<span style="color:#6366f1;">.AI</span></span>
                     </a>
+                    <div style="margin-top:6px;">
+                        <span style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#818cf8;background:rgba(99,102,241,0.15);padding:4px 12px;border-radius:20px;border:1px solid rgba(99,102,241,0.3);font-family:sans-serif;">
+                            OFFICIAL PARTNERSHIP INVITATION
+                        </span>
+                    </div>
                 </td></tr>
 
-                <!-- Main Card -->
+                <!-- Main Email Card -->
                 <tr><td>
-                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0;box-shadow:0 4px 24px rgba(0,0,0,0.06);width:100% !important;">
+                    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid #334155;box-shadow:0 20px 40px rgba(0,0,0,0.3);width:100% !important;">
                         
-                        <!-- Top Gradient -->
-                        <tr><td style="background:linear-gradient(135deg,#2563eb 0%,#7c3aed 100%);height:6px;line-height:6px;font-size:6px;">&nbsp;</td></tr>
+                        <!-- Top Accent Line -->
+                        <tr><td style="background:linear-gradient(135deg,#6366f1 0%,#2563eb 50%,#06b6d4 100%);height:6px;line-height:6px;font-size:6px;">&nbsp;</td></tr>
                         
                         <!-- Content Area -->
-                        <tr><td class="content-cell" style="padding:24px 20px 8px 20px;">
+                        <tr><td class="content-cell" style="padding:28px 24px 8px 24px;">
                             {context_badge}
                             {pitch_html}
                         </td></tr>
 
                         <!-- Services Section -->
-                        <tr><td class="services-cell" style="padding:0 20px 20px 20px;">
-                            <p style="margin:0 0 10px 0;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#94a3b8;font-weight:700;font-family:sans-serif;">WHAT WE OFFER</p>
-                            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background:#fafbfc;border-radius:10px;border:1px solid #e2e8f0;overflow:hidden;width:100% !important;">
+                        <tr><td class="services-cell" style="padding:0 24px 24px 24px;">
+                            <p style="margin:0 0 12px 0;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;font-weight:800;font-family:sans-serif;">OUR CORE CAPABILITIES</p>
+                            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;width:100% !important;">
                                 {services_html}
                             </table>
                         </td></tr>
 
-                        <!-- Website CTA Button -->
-                        <tr><td class="cta-cell" style="padding:8px 20px 28px 20px;" align="center">
-                            <a href="{site_url}" class="cta-button" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#ffffff;font-size:14px;font-weight:700;padding:14px 30px;border-radius:10px;text-decoration:none;letter-spacing:0.01em;box-shadow:0 4px 12px rgba(37,99,235,0.25);font-family:sans-serif;">
-                                Visit Our Website & View Our Work &rarr;
-                            </a>
-                            <p style="margin:10px 0 0 0;font-size:11px;color:#94a3b8;font-family:sans-serif;">Explore case studies, services, and live software demos.</p>
+                        <!-- Bulletproof Centered CTA Button with Single-Line Arrow Alignment -->
+                        <tr><td class="cta-cell" style="padding:8px 24px 32px 24px;" align="center">
+                            <table border="0" cellpadding="0" cellspacing="0" role="presentation" align="center" style="margin:0 auto;">
+                                <tr>
+                                    <td align="center" bgcolor="#4f46e5" style="border-radius:50px;background:linear-gradient(135deg,#4f46e5 0%,#2563eb 100%);box-shadow:0 8px 24px rgba(79,70,229,0.35);">
+                                        <a href="{site_url}" target="_blank" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;display:inline-block;padding:16px 36px;white-space:nowrap;letter-spacing:0.02em;">
+                                            <span style="vertical-align:middle;display:inline-block;">Visit Our Website &amp; View Our Work</span>
+                                            <span style="vertical-align:middle;display:inline-block;margin-left:8px;font-size:18px;line-height:1;font-weight:900;">&rarr;</span>
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                            <p style="margin:12px 0 0 0;font-size:12px;color:#64748b;font-family:sans-serif;font-weight:500;">
+                                Direct Website Link: <a href="{site_url}" target="_blank" style="color:#4f46e5;text-decoration:underline;font-weight:600;">{site_url}</a>
+                            </p>
                         </td></tr>
 
                         <!-- Divider -->
-                        <tr><td style="padding:0 20px;"><div style="border-top:1px solid #f1f5f9;height:1px;line-height:1px;">&nbsp;</div></td></tr>
+                        <tr><td style="padding:0 24px;"><div style="border-top:1px solid #f1f5f9;height:1px;line-height:1px;">&nbsp;</div></td></tr>
 
                         <!-- Footer -->
-                        <tr><td class="footer-cell" style="padding:20px 20px 24px 20px;background:#fafafa;">
+                        <tr><td class="footer-cell" style="padding:22px 24px 26px 24px;background:#fafafa;">
                             <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width:100% !important;">
                                 <tr>
                                     <td>
-                                        <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.5;font-family:sans-serif;">
-                                            Sent by <strong style="color:#64748b;">{sender_name}</strong> &bull; <a href="{site_url}" style="color:#2563eb;text-decoration:none;">{site_url}</a><br/>
+                                        <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6;font-family:sans-serif;">
+                                            Sent by <strong style="color:#475569;">{sender_name}</strong> &bull; <a href="{site_url}" style="color:#4f46e5;text-decoration:none;font-weight:600;">{site_url}</a><br/>
                                             &copy; {year} Nexora AI &bull; All Rights Reserved
                                         </p>
                                     </td>
                                     <td align="right" valign="top">
-                                        <a href="{site_url}/contact" style="font-size:11px;color:#94a3b8;text-decoration:underline;font-family:sans-serif;">Contact Us</a>
+                                        <a href="{site_url}#contact" style="font-size:11px;color:#6366f1;text-decoration:underline;font-family:sans-serif;font-weight:600;">Contact Us</a>
                                     </td>
                                 </tr>
                             </table>
