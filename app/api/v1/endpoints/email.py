@@ -556,75 +556,90 @@ async def check_email_replies(
     admin_user = Depends(get_current_admin_user)
 ):
     """
-    Check for incoming email replies.
-    In Production Mode (with IMAP credentials): Fetches real IMAP unread messages.
-    In Test Mode (or unconfigured IMAP): Generates simulated test replies for sent leads to test AI classification & notifications.
+    Check for incoming email replies safely without throwing 500 server errors.
     """
-    from app.core.config import settings
-    from app.services.imap_service import imap_service
-    
-    is_test_mode = settings.EMAIL_TEST_MODE or not (settings.IMAP_HOST and settings.IMAP_USERNAME and settings.IMAP_PASSWORD and "example.com" not in settings.IMAP_HOST)
-    
-    if not is_test_mode:
-        unread = imap_service.fetch_new_replies()
-        processed = await email_worker.process_replies_batch(db, unread) if unread else []
-        return {
-            "status": "success",
-            "mode": "production",
-            "imap_host": settings.IMAP_HOST,
-            "new_replies_count": len(processed),
-            "processed_replies": processed
-        }
+    try:
+        from app.core.config import settings
+        from app.services.imap_service import imap_service
+        
+        is_test_mode = settings.EMAIL_TEST_MODE or not (settings.IMAP_HOST and settings.IMAP_USERNAME and settings.IMAP_PASSWORD and "example.com" not in settings.IMAP_HOST)
+        
+        if not is_test_mode:
+            try:
+                unread = imap_service.fetch_new_replies()
+                processed = await email_worker.process_replies_batch(db, unread) if unread else []
+                return {
+                    "status": "success",
+                    "mode": "production",
+                    "imap_host": settings.IMAP_HOST,
+                    "new_replies_count": len(processed),
+                    "processed_replies": processed
+                }
+            except Exception as imap_err:
+                return {
+                    "status": "warning",
+                    "mode": "production",
+                    "message": f"Could not connect to IMAP inbox ({settings.IMAP_HOST}): {str(imap_err)}",
+                    "new_replies_count": 0,
+                    "processed_replies": []
+                }
 
-    # --- Test Mode Reply Generator ---
-    target_lead = db.query(ScrapedLead).filter(
-        ScrapedLead.bussiness_email.isnot(None),
-        ScrapedLead.bussiness_email != "",
-        or_(ScrapedLead.reply_status == "unprocessed", ScrapedLead.reply_status == None)
-    ).order_by(ScrapedLead.id.desc()).first()
-
-    if not target_lead:
+        # --- Test Mode Reply Generator ---
         target_lead = db.query(ScrapedLead).filter(
             ScrapedLead.bussiness_email.isnot(None),
-            ScrapedLead.bussiness_email != ""
-        ).first()
+            ScrapedLead.bussiness_email != "",
+            or_(ScrapedLead.reply_status == "unprocessed", ScrapedLead.reply_status == None)
+        ).order_by(ScrapedLead.id.desc()).first()
 
-    if not target_lead:
+        if not target_lead:
+            target_lead = db.query(ScrapedLead).filter(
+                ScrapedLead.bussiness_email.isnot(None),
+                ScrapedLead.bussiness_email != ""
+            ).first()
+
+        if not target_lead:
+            return {
+                "status": "success",
+                "mode": "test",
+                "message": "No leads found in database to simulate test reply for.",
+                "new_replies_count": 0,
+                "processed_replies": []
+            }
+
+        import random
+        test_reply_samples = [
+            f"Hi Nexora AI team, we received your email regarding {target_lead.bussiness_name}. We are interested in your web development & lead automation services! Could you please share pricing and portfolio details?",
+            f"Hello, thanks for reaching out to {target_lead.bussiness_name}. Can you schedule a call with us next week to discuss custom workflow automations?",
+            f"Hi! We'd like to learn more about your SEO and Google Maps ranking services for {target_lead.bussiness_name}. What is the timeline for onboarding?"
+        ]
+        
+        sample_text = random.choice(test_reply_samples)
+        now_utc = datetime.now(timezone.utc)
+        
+        simulated_reply = [{
+            "sender": target_lead.bussiness_email,
+            "sender_name": target_lead.bussiness_name or "Prospect",
+            "subject": f"Re: Digital Solutions for {target_lead.bussiness_name}",
+            "body": sample_text,
+            "received_at": now_utc
+        }]
+
+        processed = await email_worker.process_replies_batch(db, simulated_reply)
+        
         return {
             "status": "success",
             "mode": "test",
-            "message": "No leads found in database to simulate test reply for.",
+            "message": f"Generated simulated test reply for lead '{target_lead.bussiness_name}' ({target_lead.bussiness_email})",
+            "new_replies_count": len(processed),
+            "processed_replies": processed
+        }
+    except Exception as general_err:
+        return {
+            "status": "error",
+            "message": f"Reply checking encountered an exception: {str(general_err)}",
             "new_replies_count": 0,
             "processed_replies": []
         }
-
-    import random
-    test_reply_samples = [
-        f"Hi Nexora AI team, we received your email regarding {target_lead.bussiness_name}. We are interested in your web development & lead automation services! Could you please share pricing and portfolio details?",
-        f"Hello, thanks for reaching out to {target_lead.bussiness_name}. Can you schedule a call with us next week to discuss custom workflow automations?",
-        f"Hi! We'd like to learn more about your SEO and Google Maps ranking services for {target_lead.bussiness_name}. What is the timeline for onboarding?"
-    ]
-    
-    sample_text = random.choice(test_reply_samples)
-    now_utc = datetime.now(timezone.utc)
-    
-    simulated_reply = [{
-        "sender": target_lead.bussiness_email,
-        "sender_name": target_lead.bussiness_name or "Prospect",
-        "subject": f"Re: Digital Solutions for {target_lead.bussiness_name}",
-        "body": sample_text,
-        "received_at": now_utc
-    }]
-
-    processed = await email_worker.process_replies_batch(db, simulated_reply)
-    
-    return {
-        "status": "success",
-        "mode": "test",
-        "message": f"Generated simulated test reply for lead '{target_lead.bussiness_name}' ({target_lead.bussiness_email})",
-        "new_replies_count": len(processed),
-        "processed_replies": processed
-    }
 
 @router.post("/replies/simulate")
 async def simulate_custom_email_reply(
