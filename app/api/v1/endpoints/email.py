@@ -365,6 +365,119 @@ def get_conversations(
         })
     return output
 
+
+class SendCustomReplyRequest(BaseModel):
+    subject: str
+    body: str
+
+@router.post("/conversations/{lead_id}/generate-draft")
+async def generate_reply_draft_for_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    admin_user = Depends(get_current_admin_user)
+):
+    """
+    Step 2 & 3: Identify lead context and generate a tailored AI email draft proposal for admin approval.
+    """
+    lead = db.query(ScrapedLead).filter(ScrapedLead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+
+    # Fetch thread history
+    messages = db.query(EmailMessage).filter(
+        EmailMessage.lead_id == lead_id
+    ).order_by(EmailMessage.created_at.asc()).all()
+
+    thread_data = [{
+        "id": m.id,
+        "type": m.message_type,
+        "sender": m.sender_email,
+        "recipient": m.recipient_email,
+        "subject": m.subject,
+        "body": m.body,
+        "timestamp": m.created_at
+    } for m in messages]
+
+    from app.services.ai_email import ai_email_service
+    draft = await ai_email_service.generate_ai_reply_draft(lead, thread_data)
+
+    return {
+        "lead_id": lead.id,
+        "business_name": lead.bussiness_name,
+        "recipient_email": lead.bussiness_email,
+        "intent": lead.reply_status or "INTERESTED",
+        "scraped_city": lead.scraped_city,
+        "scraped_service": lead.scraped_service or lead.category,
+        "subject": draft.get("subject", f"Re: Growth Discussion for {lead.bussiness_name}"),
+        "body": draft.get("body", ""),
+        "thread": thread_data
+    }
+
+
+@router.post("/conversations/{lead_id}/send-custom")
+def send_custom_reply_to_lead(
+    lead_id: int,
+    payload: SendCustomReplyRequest,
+    db: Session = Depends(get_db),
+    admin_user = Depends(get_current_admin_user)
+):
+    """
+    Step 4 & 5: Admin approves and sends the tailored email draft directly to the business via SMTP.
+    """
+    lead = db.query(ScrapedLead).filter(ScrapedLead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+
+    if not lead.bussiness_email:
+        raise HTTPException(status_code=400, detail="Lead does not have a valid recipient email address.")
+
+    from app.core.config import settings
+    from app.services.smtp_service import smtp_sender
+
+    sender_email = getattr(settings, "SMTP_FROM_EMAIL", "info@nexora.ai")
+
+    # Send email via SMTP
+    success, error_msg = smtp_sender.send_email(
+        recipient_email=lead.bussiness_email,
+        subject=payload.subject,
+        body=payload.body,
+        is_html=False
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {error_msg}")
+
+    now_utc = datetime.now(timezone.utc)
+
+    # Save to EmailMessage DB table
+    new_msg = EmailMessage(
+        campaign_id=lead.campaign_id,
+        lead_id=lead.id,
+        message_type="AUTO_REPLY",
+        subject=payload.subject,
+        body=payload.body,
+        sender_email=sender_email,
+        recipient_email=lead.bussiness_email,
+        status="SENT",
+        sent_at=now_utc
+    )
+    db.add(new_msg)
+
+    # Update lead status
+    lead.last_email_at = now_utc
+    lead.email_status = "sent"
+
+    db.commit()
+    db.refresh(new_msg)
+
+    return {
+        "status": "success",
+        "message_id": new_msg.id,
+        "sent_to": lead.bussiness_email,
+        "sent_at": new_msg.sent_at
+    }
+
+
 # --- Analytics Endpoint ---
 
 @router.get("/analytics", response_model=EmailAnalyticsOut)

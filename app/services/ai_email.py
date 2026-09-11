@@ -363,14 +363,7 @@ class AIEmailService:
             "- MEETING_REQUEST: Prospect asks directly for calendar links or suggests a calendar date/time.\n"
             "- NEEDS_HUMAN: Email contains complex requests or needs manual administrator attention.\n"
             "- UNKNOWN: The email reply cannot be categorized.\n\n"
-            "You MUST return a JSON object with exactly these keys: 'intent', 'confidence', 'reason', 'suggested_action'.\n"
-            "Example:\n"
-            "{\n"
-            "  \"intent\": \"INTERESTED\",\n"
-            "  \"confidence\": 0.95,\n"
-            "  \"reason\": \"Prospect asked for a package pricing catalog list.\",\n"
-            "  \"suggested_action\": \"REPLY_WITH_PRICING\"\n"
-            "}"
+            "CRITICAL: You MUST return ONLY a JSON object containing the key 'intent'. Output format: {\"intent\": \"INTERESTED\", \"confidence\": 0.95, \"reason\": \"Prospect asked for pricing\", \"suggested_action\": \"REPLY_WITH_PRICING\"}"
         )
 
         try:
@@ -481,6 +474,60 @@ class AIEmailService:
             "suggested_action": suggested
         }
 
+    async def generate_ai_reply_draft(self, lead: Any, thread_messages: list) -> Dict[str, str]:
+        """
+        Generates a contextual AI draft email reply for an active lead thread.
+        """
+        strict_lang_instruction = "CRITICAL MANDATORY INSTRUCTION: You MUST write ALL content strictly in clean, professional ENGLISH. You are STRICTLY FORBIDDEN from using Chinese characters or non-English script. Do NOT output Chinese text under any circumstances.\n\n"
+
+        system_prompt = (
+            strict_lang_instruction +
+            "You are an AI business development manager for Nexora AI. Write a professional, friendly email response to a lead who replied to our cold outreach.\n"
+            "If the lead asked for a meeting, confirm availability, suggest dates/times or ask for their preferred schedule.\n"
+            "If the lead asked a question or expressed interest, answer clearly and propose a quick 10-minute discovery call.\n"
+            "Keep the reply polished, professional, and clear (under 150 words).\n"
+            "Return JSON object with 'subject' and 'body'."
+        )
+
+        thread_str = ""
+        for m in thread_messages:
+            sender = m.get('sender', 'Unknown') if isinstance(m, dict) else getattr(m, 'sender_email', 'Unknown')
+            body = m.get('body', '') if isinstance(m, dict) else getattr(m, 'body', '')
+            thread_str += f"From {sender}: {body}\n---\n"
+
+        user_prompt = (
+            f"Business Name: {lead.bussiness_name or 'Prospect'}\n"
+            f"Category/Service: {lead.scraped_service or lead.category or 'General'}\n"
+            f"City: {lead.scraped_city or 'your city'}\n"
+            f"Lead Intent Classification: {lead.reply_status or 'INTERESTED'}\n"
+            f"Email Thread History:\n{thread_str}"
+        )
+
+        try:
+            content = await self._call_openrouter(system_prompt, user_prompt, response_format="json")
+            parsed = json.loads(content)
+            if "subject" in parsed and "body" in parsed:
+                if has_chinese_or_non_english(parsed["subject"]) or has_chinese_or_non_english(parsed["body"]):
+                    return self._fallback_reply_draft(lead)
+                return parsed
+            raise ValueError("JSON missing subject or body.")
+        except Exception as e:
+            logger.warning(f"Failed to generate AI reply draft via OpenRouter ({str(e)}). Using fallback.")
+            return self._fallback_reply_draft(lead)
+
+    def _fallback_reply_draft(self, lead: Any) -> Dict[str, str]:
+        biz_name = lead.bussiness_name or "there"
+        subject = f"Re: Partnership & Growth Discussion for {biz_name}"
+        body = (
+            f"Hi team at {biz_name},\n\n"
+            f"Thank you for getting back to us! We would love to set up a quick 10-minute meeting to discuss how we can support {biz_name} with web development, SEO, and automated lead systems.\n\n"
+            f"Are you available for a brief call tomorrow or later this week? Please let us know what time works best for you, or feel free to share your calendar link.\n\n"
+            f"Looking forward to speaking with you!\n\n"
+            f"Best regards,\n"
+            f"{settings.SMTP_FROM_NAME}"
+        )
+        return {"subject": subject, "body": body}
+
     def _fallback_followup(self, lead: Any, campaign: Optional[Any] = None) -> Dict[str, str]:
         biz_name = lead.bussiness_name or "your team"
         subject = f"Following up: Growth & Automation for {biz_name}"
@@ -495,3 +542,4 @@ class AIEmailService:
         return {"subject": subject, "body": body}
 
 ai_email_service = AIEmailService()
+
