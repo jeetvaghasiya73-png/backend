@@ -32,6 +32,7 @@ class ScrapedLead(Base):
     # Additional Campaign & Agent tracking fields
     email_subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     email_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    email_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # Full conversation history in JSON format
     personalization_status: Mapped[str] = mapped_column(String(50), default="pending", server_default="pending", index=True) # pending, success, failed
     last_email_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     next_followup_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)

@@ -515,6 +515,71 @@ class AIEmailService:
             logger.warning(f"Failed to generate AI reply draft via OpenRouter ({str(e)}). Using fallback.")
             return self._fallback_reply_draft(lead)
 
+    async def generate_meeting_email_draft(self, lead: Any, thread_messages: list = None) -> Dict[str, str]:
+        """
+        Generates a tailored 'Thank you for inquiry & arranging a meeting soon' email proposal.
+        """
+        strict_lang_instruction = "CRITICAL MANDATORY INSTRUCTION: You MUST write ALL content strictly in clean, professional ENGLISH. You are STRICTLY FORBIDDEN from using Chinese characters or non-English script. Do NOT output Chinese text under any circumstances.\n\n"
+
+        system_prompt = (
+            strict_lang_instruction +
+            "You are a Senior Partnership Manager at Nexora AI. Write a high-converting, courteous email response to a business who inquired or replied to our services.\n"
+            "The email MUST thank them for their inquiry and confirm that we will arrange a brief 10-minute strategy meeting soon.\n"
+            "Structure:\n"
+            "1. Enthusiastic thank you for inquiring regarding their business.\n"
+            "2. Reassurance that our team is preparing customized growth recommendations for their industry.\n"
+            "3. Clear proposal to schedule a 10-minute meeting this week (suggesting general times or asking for their preference).\n"
+            "4. Professional closing inviting them to confirm a convenient time.\n"
+            "Keep total length under 150 words.\n"
+            "Return JSON object with 'subject' and 'body'."
+        )
+
+        thread_str = ""
+        if thread_messages:
+            for m in thread_messages:
+                sender = m.get('sender', 'Unknown') if isinstance(m, dict) else getattr(m, 'sender_email', 'Unknown')
+                body = m.get('body', '') if isinstance(m, dict) else getattr(m, 'body', '')
+                thread_str += f"From {sender}: {body}\n---\n"
+
+        user_prompt = (
+            f"Business Name: {lead.bussiness_name or 'Prospect'}\n"
+            f"Category/Service: {lead.scraped_service or lead.category or 'General Business'}\n"
+            f"City: {lead.scraped_city or 'your city'}\n"
+            f"Website: {lead.bussiness_website or 'Not specified'}\n"
+            f"Intent: {lead.reply_status or 'INTERESTED'}\n"
+            f"Thread History:\n{thread_str or 'Direct inquiry received.'}"
+        )
+
+        try:
+            content = await self._call_openrouter(system_prompt, user_prompt, response_format="json")
+            parsed = json.loads(content)
+            if "subject" in parsed and "body" in parsed:
+                if has_chinese_or_non_english(parsed["subject"]) or has_chinese_or_non_english(parsed["body"]):
+                    return self._fallback_meeting_email_draft(lead)
+                return parsed
+            raise ValueError("JSON missing subject or body.")
+        except Exception as e:
+            logger.warning(f"Failed to generate AI meeting draft via OpenRouter ({str(e)}). Using fallback.")
+            return self._fallback_meeting_email_draft(lead)
+
+    def _fallback_meeting_email_draft(self, lead: Any) -> Dict[str, str]:
+        biz_name = lead.bussiness_name or "there"
+        city = lead.scraped_city or "your area"
+        service = lead.scraped_service or lead.category or "business"
+        subject = f"Thank you for your inquiry — Let's arrange a meeting for {biz_name}"
+        body = (
+            f"Dear Team at {biz_name},\n\n"
+            f"Thank you very much for reaching out and inquiring about our digital growth, web design, and automation solutions!\n\n"
+            f"We are excited about the opportunity to partner with {biz_name} in {city}. Our team is currently reviewing your profile to customize high-impact recommendations tailored specifically for {service}.\n\n"
+            f"We would love to arrange a brief 10-minute strategy meeting to walk you through our ideas and answer any questions. Would tomorrow afternoon or Thursday work best for your schedule?\n\n"
+            f"Please let us know your preferred date and time, or feel free to share your calendar link, and we will get it scheduled right away!\n\n"
+            f"Looking forward to connecting soon.\n\n"
+            f"Best regards,\n"
+            f"{settings.SMTP_FROM_NAME or 'Nexora AI Team'}\n"
+            f"{settings.WEBSITE_URL or 'https://nexora-meet-b4aa.vercel.app'}"
+        )
+        return {"subject": subject, "body": body}
+
     def _fallback_reply_draft(self, lead: Any) -> Dict[str, str]:
         biz_name = lead.bussiness_name or "there"
         subject = f"Re: Partnership & Growth Discussion for {biz_name}"
@@ -527,6 +592,7 @@ class AIEmailService:
             f"{settings.SMTP_FROM_NAME}"
         )
         return {"subject": subject, "body": body}
+
 
     def _fallback_followup(self, lead: Any, campaign: Optional[Any] = None) -> Dict[str, str]:
         biz_name = lead.bussiness_name or "your team"

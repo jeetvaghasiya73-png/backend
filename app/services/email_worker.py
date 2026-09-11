@@ -19,6 +19,32 @@ from app.core.config import settings
 
 logger = logging.getLogger("email_worker")
 
+def sync_lead_email_messages(db: Session, lead: ScrapedLead):
+    """
+    Syncs and serializes all EmailMessage entries for a lead into lead.email_message JSON format.
+    """
+    if not lead or not lead.id:
+        return
+    import json
+    messages = db.query(EmailMessage).filter(
+        EmailMessage.lead_id == lead.id
+    ).order_by(EmailMessage.created_at.asc()).all()
+
+    chat_history = []
+    for m in messages:
+        role = "user" if m.message_type == "REPLY" else "assistant"
+        chat_history.append({
+            "id": m.id,
+            "role": role,
+            "type": m.message_type,
+            "sender": m.sender_email,
+            "recipient": m.recipient_email,
+            "subject": m.subject,
+            "body": m.body,
+            "timestamp": m.created_at.isoformat() if m.created_at else None
+        })
+    lead.email_message = json.dumps(chat_history, default=str)
+
 class EmailOutreachWorker:
     def __init__(self):
         self._running = False
