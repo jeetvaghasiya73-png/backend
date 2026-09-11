@@ -35,8 +35,8 @@ def upload_scraped_leads(
     admin_user = Depends(get_current_admin_user)
 ):
     """
-    Ultra-fast bulk upload for CSV or Excel (.csv, .xlsx, .xls) spreadsheet files into PostgreSQL/SQLite database.
-    Flexible column resolver handles both snake_case and human Excel title columns with high performance bulk insertion.
+    Ultra-fast bulk upload for CSV or Excel (.csv, .xlsx, .xls) spreadsheet files into PostgreSQL database.
+    Enforces 100% unique data in Render database using O(1) in-memory email, phone, and city deduplication.
     """
     filename_lower = file.filename.lower() if file.filename else ""
     if not (filename_lower.endswith('.xlsx') or filename_lower.endswith('.xls') or filename_lower.endswith('.csv')):
@@ -61,30 +61,47 @@ def upload_scraped_leads(
                     return col_map[cand.lower()]
             return None
 
-        col_email = find_col("bussiness_email", "business_email", "email", "email address", "email_address", "e-mail", "contact_email")
-        col_name = find_col("bussiness_name", "business_name", "company", "company name", "company_name", "name", "lead name", "lead_name", "title", "business name", "store_name")
-        col_city = find_col("scraped_city", "city", "location", "place", "town", "scraped city")
-        col_phone = find_col("bussiness_number", "business_number", "phone", "phone number", "phone_number", "mobile", "contact_number", "number", "business number")
-        col_website = find_col("bussiness_website", "business_website", "website", "url", "site", "web", "business website")
-        col_category = find_col("category", "industry", "type", "business_type", "sector")
-        col_service = find_col("scraped_service", "service", "keyword", "scraped_keyword", "services", "scraped service")
+        col_email = find_col("bussiness_email", "business_email", "email", "email address", "email_address", "e-mail", "contact_email", "mail", "emails", "mail_id", "email_id")
+        col_name = find_col("bussiness_name", "business_name", "company", "company name", "company_name", "name", "lead name", "lead_name", "title", "business name", "store_name", "store name", "firm", "firm_name", "organization", "agency")
+        col_city = find_col("scraped_city", "city", "location", "place", "town", "scraped city", "district", "state", "city_name")
+        col_phone = find_col("bussiness_number", "business_number", "phone", "phone number", "phone_number", "mobile", "contact_number", "number", "business number", "mobile_number", "mobile number", "contact", "telephone", "phone_no")
+        col_website = find_col("bussiness_website", "business_website", "website", "url", "site", "web", "business website", "link", "domain")
+        col_category = find_col("category", "industry", "type", "business_type", "sector", "category_name")
+        col_service = find_col("scraped_service", "service", "keyword", "scraped_keyword", "services", "scraped service", "sub_category")
         col_rating = find_col("rating", "score", "stars", "rate")
-        col_address = find_col("bussiness_address", "business_address", "address", "full_address", "business address")
+        col_address = find_col("bussiness_address", "business_address", "address", "full_address", "business address", "location_address")
         col_area = find_col("bussiness_area", "business_area", "area")
         col_landmark = find_col("landmark")
         col_reviews = find_col("total_review", "total reviews", "reviews")
 
         records = df.to_dict(orient="records")
         
-        # Pre-fetch all existing emails in ONE SQL query for O(1) in-memory check
+        # Pre-fetch all existing unique keys from PostgreSQL database for O(1) deduplication
         existing_emails = set(
-            e[0].lower() for e in db.query(ScrapedLead.bussiness_email).filter(
+            e[0].lower().strip() for e in db.query(ScrapedLead.bussiness_email).filter(
                 ScrapedLead.bussiness_email.isnot(None),
                 ScrapedLead.bussiness_email != ""
-            ).all()
+            ).all() if e[0]
         )
         
-        seen_emails = set()
+        existing_name_phones = set(
+            (n[0].lower().strip(), n[1].strip()) for n in db.query(ScrapedLead.bussiness_name, ScrapedLead.bussiness_number).filter(
+                ScrapedLead.bussiness_name.isnot(None),
+                ScrapedLead.bussiness_name != "",
+                ScrapedLead.bussiness_number.isnot(None),
+                ScrapedLead.bussiness_number != ""
+            ).all() if n[0] and n[1]
+        )
+
+        existing_name_cities = set(
+            (c[0].lower().strip(), c[1].lower().strip()) for c in db.query(ScrapedLead.bussiness_name, ScrapedLead.scraped_city).filter(
+                ScrapedLead.bussiness_name.isnot(None),
+                ScrapedLead.bussiness_name != "",
+                ScrapedLead.scraped_city.isnot(None),
+                ScrapedLead.scraped_city != ""
+            ).all() if c[0] and c[1]
+        )
+        
         leads_to_insert = []
         cities_inserted = set()
         skipped_count = 0
@@ -103,24 +120,51 @@ def upload_scraped_leads(
         for row in records:
             raw_email = safe_field(col_email)
             b_name = safe_field(col_name, max_len=250)
+            phone = safe_field(col_phone, max_len=50)
+            city = safe_field(col_city, max_len=100, default="Outreach")
             
-            if not b_name and not raw_email:
+            # Must have at least a business name OR phone OR email to be a valid lead
+            if not b_name and not raw_email and not phone:
                 skipped_count += 1
                 continue
             
-            first_email = None
+            cleaned_email = None
             if raw_email:
-                cleaned_email = raw_email.replace(";", ",").split(",")[0].strip().lower()
-                if "@" in cleaned_email and cleaned_email not in seen_emails and cleaned_email not in existing_emails:
-                    first_email = cleaned_email[:250]
-                    seen_emails.add(first_email)
-                    existing_emails.add(first_email)
+                cand_email = raw_email.replace(";", ",").split(",")[0].strip().lower()
+                if "@" in cand_email:
+                    cleaned_email = cand_email[:250]
 
+            # Uniqueness Check 1: Duplicate Email in Render DB or current upload
+            if cleaned_email and cleaned_email in existing_emails:
+                skipped_count += 1
+                continue
+
+            # Uniqueness Check 2: Duplicate Business Name + Phone Number in Render DB
+            if b_name and phone:
+                name_phone_key = (b_name.lower().strip(), phone.strip())
+                if name_phone_key in existing_name_phones:
+                    skipped_count += 1
+                    continue
+
+            # Uniqueness Check 3: Duplicate Business Name + City in Render DB
+            if b_name and city:
+                name_city_key = (b_name.lower().strip(), city.lower().strip())
+                if name_city_key in existing_name_cities:
+                    skipped_count += 1
+                    continue
+
+            # If business name is missing but email exists, derive title from email handle
             if not b_name:
-                b_name = first_email.split("@")[0].title() if first_email else "Direct Prospect"
+                b_name = cleaned_email.split("@")[0].replace(".", " ").replace("_", " ").title() if cleaned_email else "Direct Lead"
 
-            city = safe_field(col_city, max_len=100, default="Outreach")
-            phone = safe_field(col_phone, max_len=50)
+            # Update tracking sets so duplicates inside the same uploaded file are also caught
+            if cleaned_email:
+                existing_emails.add(cleaned_email)
+            if b_name and phone:
+                existing_name_phones.add((b_name.lower().strip(), phone.strip()))
+            if b_name and city:
+                existing_name_cities.add((b_name.lower().strip(), city.lower().strip()))
+
             website = safe_field(col_website, max_len=500)
             category = safe_field(col_category, max_len=1000, default="B2B Lead")
             service = safe_field(col_service, max_len=1000, default="Digital Services")
@@ -133,7 +177,7 @@ def upload_scraped_leads(
 
             leads_to_insert.append({
                 "bussiness_name": b_name,
-                "bussiness_email": first_email,
+                "bussiness_email": cleaned_email,
                 "bussiness_number": phone,
                 "bussiness_area": area,
                 "rating": rating,
@@ -157,8 +201,7 @@ def upload_scraped_leads(
                 db.commit()
             except Exception as insert_err:
                 db.rollback()
-                print("Bulk insert warning, falling back to batch/individual insertion:", insert_err)
-                # Fallback to individual object creation so bad rows don't abort good ones
+                print("Bulk insert warning, falling back to individual object insertion:", insert_err)
                 inserted_count = 0
                 for item in leads_to_insert:
                     try:
@@ -173,8 +216,8 @@ def upload_scraped_leads(
             try:
                 from app.models.notification import Notification
                 db.add(Notification(
-                    title="Bulk Excel Import Completed",
-                    message=f"Imported {len(leads_to_insert)} scraped leads into database ({len(cities_inserted)} cities).",
+                    title="Bulk Spreadsheet Import Completed",
+                    message=f"Imported {len(leads_to_insert)} unique leads into database ({len(cities_inserted)} cities, {skipped_count} duplicates skipped).",
                     type="lead",
                     read=False,
                     link="/admin/dashboard/leads",
@@ -185,7 +228,7 @@ def upload_scraped_leads(
             db.commit()
 
         return {
-            "message": f"Successfully imported {len(leads_to_insert)} leads into database!",
+            "message": f"Successfully imported {len(leads_to_insert)} unique leads into database! ({skipped_count} duplicates skipped)",
             "inserted": len(leads_to_insert),
             "skipped": skipped_count,
             "total_rows": len(records),
@@ -205,12 +248,9 @@ def export_scraped_leads(
     admin_user = Depends(get_current_admin_user)
 ):
     """
-    Export scraped leads to a CSV file (Admin only).
+    Export all scraped leads to a CSV file (Admin only).
     """
-    query = db.query(ScrapedLead).filter(
-        ScrapedLead.bussiness_email != None,
-        ScrapedLead.bussiness_email != ""
-    )
+    query = db.query(ScrapedLead)
     
     # Apply filters
     if search:
@@ -320,17 +360,12 @@ def get_scraped_leads_stats(
     Ultra-fast SQL aggregated metrics for admin dashboard KPI cards and analytics.
     Exposed as /api/v1/scraped-leads/stats (Admin only).
     """
-    total = db.query(ScrapedLead).filter(
-        ScrapedLead.bussiness_email != None,
-        ScrapedLead.bussiness_email != ""
-    ).count()
+    total = db.query(ScrapedLead).count()
 
     city_counts = db.query(
         ScrapedLead.scraped_city,
         func.count(ScrapedLead.id).label("count")
     ).filter(
-        ScrapedLead.bussiness_email != None,
-        ScrapedLead.bussiness_email != "",
         ScrapedLead.scraped_city != None,
         ScrapedLead.scraped_city != ""
     ).group_by(ScrapedLead.scraped_city).order_by(func.count(ScrapedLead.id).desc()).limit(10).all()
@@ -340,20 +375,12 @@ def get_scraped_leads_stats(
     category_counts = db.query(
         func.coalesce(ScrapedLead.scraped_service, ScrapedLead.category, "General Business").label("cat"),
         func.count(ScrapedLead.id).label("count")
-    ).filter(
-        ScrapedLead.bussiness_email != None,
-        ScrapedLead.bussiness_email != ""
     ).group_by(func.coalesce(ScrapedLead.scraped_service, ScrapedLead.category, "General Business")).order_by(func.count(ScrapedLead.id).desc()).limit(10).all()
 
     categories = [{"name": c[0], "value": c[1]} for c in category_counts]
 
-    unique_cities = db.query(func.count(func.distinct(ScrapedLead.scraped_city))).filter(
-        ScrapedLead.bussiness_email != None, ScrapedLead.bussiness_email != ""
-    ).scalar() or 0
-
-    unique_categories = db.query(func.count(func.distinct(ScrapedLead.scraped_service))).filter(
-        ScrapedLead.bussiness_email != None, ScrapedLead.bussiness_email != ""
-    ).scalar() or 0
+    unique_cities = db.query(func.count(func.distinct(ScrapedLead.scraped_city))).scalar() or 0
+    unique_categories = db.query(func.count(func.distinct(ScrapedLead.scraped_service))).scalar() or 0
 
     return {
         "total": total,
@@ -370,17 +397,20 @@ def get_scraped_leads(
     search: Optional[str] = Query(None, description="Search query"),
     city: Optional[str] = Query(None, description="Filter by city"),
     keyword: Optional[str] = Query(None, description="Filter by scraped keyword"),
+    has_email: Optional[bool] = Query(None, description="Filter by email availability"),
     db: Session = Depends(get_db),
     admin_user = Depends(get_current_admin_user)
 ):
     """
-    Retrieve all scraped leads (with email) with search, filters, and pagination (Admin only).
+    Retrieve scraped leads with search, filters, and pagination (Admin only).
     """
-    query = db.query(ScrapedLead).filter(
-        ScrapedLead.bussiness_email != None,
-        ScrapedLead.bussiness_email != ""
-    )
+    query = db.query(ScrapedLead)
     
+    if has_email is True:
+        query = query.filter(ScrapedLead.bussiness_email.isnot(None), ScrapedLead.bussiness_email != "")
+    elif has_email is False:
+        query = query.filter(or_(ScrapedLead.bussiness_email.is_(None), ScrapedLead.bussiness_email == ""))
+
     # Apply filters
     if search:
         search_term = f"%{search}%"

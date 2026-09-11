@@ -137,6 +137,21 @@ def startup_event():
                     except Exception:
                         db.rollback()
 
+                # Clean up existing duplicate lead records to enforce 100% unique Render DB
+                try:
+                    db.execute(text("""
+                        DELETE FROM scraped_leads a USING scraped_leads b
+                        WHERE a.id > b.id
+                        AND (
+                            (a.bussiness_email IS NOT NULL AND a.bussiness_email != '' AND LOWER(a.bussiness_email) = LOWER(b.bussiness_email))
+                            OR (a.bussiness_name IS NOT NULL AND a.bussiness_name != '' AND a.bussiness_number IS NOT NULL AND a.bussiness_number != '' AND LOWER(a.bussiness_name) = LOWER(b.bussiness_name) AND a.bussiness_number = b.bussiness_number)
+                        );
+                    """))
+                    db.commit()
+                except Exception as dup_err:
+                    db.rollback()
+                    print("Deduplication startup notice:", dup_err)
+
         # Automatic migration checks for users table
         if "users" in inspector.get_table_names():
             user_columns = [col["name"] for col in inspector.get_columns("users")]
