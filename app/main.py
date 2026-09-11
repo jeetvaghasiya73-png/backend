@@ -99,6 +99,37 @@ def startup_event():
         dialect_name = db.bind.dialect.name if (db.bind and hasattr(db.bind, "dialect")) else "sqlite"
         ts_type = "TIMESTAMP" if dialect_name == "postgresql" else "TIMESTAMP"
         
+        # Check and migrate contact_messages and email_messages columns
+        if "contact_messages" in inspector.get_table_names():
+            cm_columns = [col["name"] for col in inspector.get_columns("contact_messages")]
+            if "auto_reply_sent" not in cm_columns:
+                try:
+                    db.execute(text("ALTER TABLE contact_messages ADD COLUMN auto_reply_sent BOOLEAN DEFAULT FALSE"))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            if "auto_reply_status" not in cm_columns:
+                try:
+                    db.execute(text("ALTER TABLE contact_messages ADD COLUMN auto_reply_status VARCHAR(50) DEFAULT 'pending'"))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+        if "email_messages" in inspector.get_table_names():
+            em_columns = [col["name"] for col in inspector.get_columns("email_messages")]
+            if "contact_id" not in em_columns:
+                try:
+                    db.execute(text("ALTER TABLE email_messages ADD COLUMN contact_id INTEGER NULL REFERENCES contact_messages(id) ON DELETE CASCADE"))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            try:
+                if dialect_name == "postgresql":
+                    db.execute(text("ALTER TABLE email_messages ALTER COLUMN lead_id DROP NOT NULL;"))
+                    db.commit()
+            except Exception:
+                db.rollback()
+
         # Check and migrate scraped_leads columns
         if "scraped_leads" in inspector.get_table_names():
             columns = [col["name"] for col in inspector.get_columns("scraped_leads")]
