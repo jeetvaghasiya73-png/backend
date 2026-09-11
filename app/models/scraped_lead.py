@@ -8,21 +8,21 @@ class ScrapedLead(Base):
     __tablename__ = "scraped_leads"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    bussiness_name: Mapped[str] = mapped_column(String(255), nullable=True)
+    bussiness_name: Mapped[str] = mapped_column(Text, nullable=True)
     bussiness_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True, unique=True)
     bussiness_number: Mapped[str] = mapped_column(String(100), nullable=True)
-    bussiness_area: Mapped[str] = mapped_column(String(255), nullable=True)
+    bussiness_area: Mapped[str] = mapped_column(Text, nullable=True)
     rating: Mapped[str] = mapped_column(String(50), nullable=True)
-    landmark: Mapped[str] = mapped_column(String(255), nullable=True)
+    landmark: Mapped[str] = mapped_column(Text, nullable=True)
     total_review: Mapped[str] = mapped_column(String(50), nullable=True)
-    building: Mapped[str] = mapped_column(String(255), nullable=True)
+    building: Mapped[str] = mapped_column(Text, nullable=True)
     pincode: Mapped[str] = mapped_column(String(50), nullable=True)
-    bussiness_website: Mapped[str] = mapped_column(String(255), nullable=True)
+    bussiness_website: Mapped[str] = mapped_column(Text, nullable=True)
     category: Mapped[str] = mapped_column(Text, nullable=True)
     bussiness_address: Mapped[str] = mapped_column(Text, nullable=True)
     service: Mapped[str] = mapped_column(Text, nullable=True)
-    scraped_city: Mapped[str] = mapped_column(String(100), nullable=True, index=True)
-    scraped_service: Mapped[str] = mapped_column(String(100), nullable=True, index=True)
+    scraped_city: Mapped[str] = mapped_column(String(255), nullable=True, index=True)
+    scraped_service: Mapped[str] = mapped_column(Text, nullable=True, index=True)
     
     # Outreach status tracking columns
     email_status: Mapped[str] = mapped_column(String(50), default="pending", server_default="pending", index=True)

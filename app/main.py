@@ -128,6 +128,15 @@ def startup_event():
                         db.rollback()
                         print(f"Migration notice for {col_name}: {col_err}")
 
+            # Ensure text column types in PostgreSQL to prevent StringDataRightTruncation
+            if dialect_name == "postgresql":
+                for col in ["scraped_service", "category", "service", "bussiness_address", "bussiness_website", "bussiness_name", "scraped_city", "bussiness_area", "landmark", "building"]:
+                    try:
+                        db.execute(text(f"ALTER TABLE scraped_leads ALTER COLUMN {col} TYPE TEXT;"))
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+
         # Automatic migration checks for users table
         if "users" in inspector.get_table_names():
             user_columns = [col["name"] for col in inspector.get_columns("users")]

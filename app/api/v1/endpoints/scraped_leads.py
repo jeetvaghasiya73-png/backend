@@ -90,9 +90,19 @@ def upload_scraped_leads(
         skipped_count = 0
         now_utc = datetime.now(timezone.utc)
         
+        def safe_field(col_name, max_len=None, default=None):
+            if not col_name or col_name not in row or row[col_name] is None:
+                return default
+            val = str(row[col_name]).strip()
+            if not val or val.lower() == "nan" or val.lower() == "none" or val.lower() == "null":
+                return default
+            if max_len and len(val) > max_len:
+                return val[:max_len]
+            return val
+
         for row in records:
-            raw_email = str(row[col_email]).strip() if col_email and row.get(col_email) is not None and str(row[col_email]).lower() != "nan" else ""
-            b_name = str(row[col_name]).strip() if col_name and row.get(col_name) is not None and str(row[col_name]).lower() != "nan" else ""
+            raw_email = safe_field(col_email)
+            b_name = safe_field(col_name, max_len=250)
             
             if not b_name and not raw_email:
                 skipped_count += 1
@@ -102,23 +112,24 @@ def upload_scraped_leads(
             if raw_email:
                 cleaned_email = raw_email.replace(";", ",").split(",")[0].strip().lower()
                 if "@" in cleaned_email and cleaned_email not in seen_emails and cleaned_email not in existing_emails:
-                    first_email = cleaned_email
+                    first_email = cleaned_email[:250]
                     seen_emails.add(first_email)
                     existing_emails.add(first_email)
 
             if not b_name:
                 b_name = first_email.split("@")[0].title() if first_email else "Direct Prospect"
 
-            city = str(row[col_city]).strip() if col_city and row.get(col_city) is not None and str(row[col_city]).lower() != "nan" else "Outreach"
-            phone = str(row[col_phone]).strip() if col_phone and row.get(col_phone) is not None and str(row[col_phone]).lower() != "nan" else None
-            website = str(row[col_website]).strip() if col_website and row.get(col_website) is not None and str(row[col_website]).lower() != "nan" else None
-            category = str(row[col_category]).strip() if col_category and row.get(col_category) is not None and str(row[col_category]).lower() != "nan" else "B2B Lead"
-            service = str(row[col_service]).strip() if col_service and row.get(col_service) is not None and str(row[col_service]).lower() != "nan" else "Digital Services"
-            rating = str(row[col_rating]).strip() if col_rating and row.get(col_rating) is not None and str(row[col_rating]).lower() != "nan" else "4.5"
-            address = str(row[col_address]).strip() if col_address and row.get(col_address) is not None and str(row[col_address]).lower() != "nan" else None
-            area = str(row[col_area]).strip() if col_area and row.get(col_area) is not None and str(row[col_area]).lower() != "nan" else None
-            landmark = str(row[col_landmark]).strip() if col_landmark and row.get(col_landmark) is not None and str(row[col_landmark]).lower() != "nan" else None
-            total_review = str(row[col_reviews]).strip() if col_reviews and row.get(col_reviews) is not None and str(row[col_reviews]).lower() != "nan" else None
+            city = safe_field(col_city, max_len=100, default="Outreach")
+            phone = safe_field(col_phone, max_len=50)
+            website = safe_field(col_website, max_len=500)
+            category = safe_field(col_category, max_len=1000, default="B2B Lead")
+            service = safe_field(col_service, max_len=1000, default="Digital Services")
+            rating = safe_field(col_rating, max_len=20, default="4.5")
+            address = safe_field(col_address, max_len=1000)
+            area = safe_field(col_area, max_len=250)
+            landmark = safe_field(col_landmark, max_len=250)
+            total_review = safe_field(col_reviews, max_len=20)
+            scraped_service_val = safe_field(col_service, max_len=250, default="Digital Services")
 
             leads_to_insert.append({
                 "bussiness_name": b_name,
@@ -133,7 +144,7 @@ def upload_scraped_leads(
                 "bussiness_address": address,
                 "service": service,
                 "scraped_city": city,
-                "scraped_service": service,
+                "scraped_service": scraped_service_val,
                 "email_status": "pending",
                 "created_at": now_utc
             })
@@ -141,7 +152,24 @@ def upload_scraped_leads(
                 cities_inserted.add(city)
             
         if leads_to_insert:
-            db.bulk_insert_mappings(ScrapedLead, leads_to_insert)
+            try:
+                db.bulk_insert_mappings(ScrapedLead, leads_to_insert)
+                db.commit()
+            except Exception as insert_err:
+                db.rollback()
+                print("Bulk insert warning, falling back to batch/individual insertion:", insert_err)
+                # Fallback to individual object creation so bad rows don't abort good ones
+                inserted_count = 0
+                for item in leads_to_insert:
+                    try:
+                        lead_obj = ScrapedLead(**item)
+                        db.add(lead_obj)
+                        db.commit()
+                        inserted_count += 1
+                    except Exception as single_err:
+                        db.rollback()
+                        print(f"Skipping row due to db error: {single_err}")
+                leads_to_insert = leads_to_insert[:inserted_count]
             try:
                 from app.models.notification import Notification
                 db.add(Notification(
