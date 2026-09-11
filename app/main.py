@@ -108,6 +108,7 @@ def startup_event():
                 ("email_error", "ALTER TABLE scraped_leads ADD COLUMN email_error TEXT NULL"),
                 ("email_subject", "ALTER TABLE scraped_leads ADD COLUMN email_subject VARCHAR(255) NULL"),
                 ("email_body", "ALTER TABLE scraped_leads ADD COLUMN email_body TEXT NULL"),
+                ("email_message", "ALTER TABLE scraped_leads ADD COLUMN email_message TEXT NULL"),
                 ("personalization_status", "ALTER TABLE scraped_leads ADD COLUMN personalization_status VARCHAR(50) DEFAULT 'pending'"),
                 ("last_email_at", f"ALTER TABLE scraped_leads ADD COLUMN last_email_at {ts_type} NULL"),
                 ("next_followup_at", f"ALTER TABLE scraped_leads ADD COLUMN next_followup_at {ts_type} NULL"),
