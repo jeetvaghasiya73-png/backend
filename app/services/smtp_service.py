@@ -9,9 +9,13 @@ logger = logging.getLogger("smtp_service")
 
 import os
 import base64
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
+try:
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+    HAS_GMAIL_API = True
+except ImportError:
+    HAS_GMAIL_API = False
 
 logger = logging.getLogger("smtp_service")
 
@@ -61,6 +65,8 @@ class SMTPEmailSender:
 
     def _get_gmail_service(self):
         """Establish and return an authenticated Gmail API service from env vars or token.json."""
+        if not HAS_GMAIL_API:
+            return None
         creds = None
         
         # 1. Check environment variables first (Cloud deployment)

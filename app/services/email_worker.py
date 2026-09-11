@@ -3,7 +3,7 @@ import logging
 import random
 from typing import List, Dict, Any, Optional, Tuple, Set
 from datetime import datetime, timezone, timedelta
-from sqlalchemy import text
+from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 
 from app.database.session import SessionLocal
@@ -712,47 +712,55 @@ class EmailOutreachWorker:
             elif intent == "NOT_INTERESTED":
                 logger.info(f"Lead ID {lead.id} (<{sender_email}>) marked NOT_INTERESTED.")
             elif intent in ("INTERESTED", "MEETING_REQUEST", "QUESTION"):
-                # Handle AUTO automation modes
-                campaign = db.query(Campaign).filter(Campaign.id == lead.campaign_id).first()
-                if campaign and campaign.automation_mode == "AUTO":
-                    # Generate auto-response
-                    try:
-                        logger.info(f"Generating auto-reply for lead ID {lead.id} ({intent})")
-                        draft_system_prompt = (
-                            f"You are the conversation agent for Nexora AI. Draft a polite, professional reply to the customer's email. "
-                            f"Context: {campaign.description}. Customer intent: {intent}. Customer question/email: {reply['body']}"
-                        )
-                        reply_content = await ai_email_service._call_openrouter(
-                            system_prompt=draft_system_prompt,
-                            user_prompt=reply["body"]
-                        )
-                        
-                        # Auto-send
-                        success, smtp_err = smtp_sender.send_email(
-                            recipient_email=sender_email,
-                            subject=f"Re: {reply['subject']}",
+                # Automatically generate and dispatch AI reply back to prospect
+                campaign = db.query(Campaign).filter(Campaign.id == lead.campaign_id).first() if lead.campaign_id else None
+                campaign_desc = campaign.description if (campaign and campaign.description) else "Nexora AI web development, lead automation, and digital growth services."
+                sender_from = (campaign.sender_email if campaign and campaign.sender_email else None) or settings.SMTP_FROM_EMAIL or "info@nexora.ai"
+
+                try:
+                    logger.info(f"Generating auto-reply for lead ID {lead.id} ({lead.bussiness_name}) - intent: {intent}")
+                    draft_system_prompt = (
+                        f"You are the conversation agent for Nexora AI. Draft a concise, polite, and professional reply to the customer's email. "
+                        f"Company context: {campaign_desc}. Customer business name: {lead.bussiness_name}. Customer intent: {intent}. Customer question/email body: {reply['body']}"
+                    )
+                    reply_content = await ai_email_service._call_openrouter(
+                        system_prompt=draft_system_prompt,
+                        user_prompt=reply["body"]
+                    )
+                    
+                    # Ensure reply subject starts with Re:
+                    reply_subj = reply.get("subject") or f"Outreach Opportunity for {lead.bussiness_name}"
+                    if not reply_subj.lower().startswith("re:"):
+                        reply_subj = f"Re: {reply_subj}"
+
+                    # Auto-send email back to prospect sender_email
+                    success, smtp_err = smtp_sender.send_email(
+                        recipient_email=sender_email,
+                        subject=reply_subj,
+                        body=reply_content,
+                        is_html=False
+                    )
+                    if success:
+                        # Log auto-reply message in database
+                        sent_reply = EmailMessage(
+                            campaign_id=lead.campaign_id,
+                            lead_id=lead.id,
+                            message_type="MANUAL", # counted as outreach response
+                            subject=reply_subj,
                             body=reply_content,
-                            is_html=False
+                            recipient_email=sender_email,
+                            sender_email=sender_from,
+                            status="SENT",
+                            sent_at=datetime.now(timezone.utc)
                         )
-                        if success:
-                            # Log auto-reply message
-                            sent_reply = EmailMessage(
-                                campaign_id=campaign.id,
-                                lead_id=lead.id,
-                                message_type="MANUAL", # counted as manual outreach response
-                                subject=f"Re: {reply['subject']}",
-                                body=reply_content,
-                                recipient_email=sender_email,
-                                sender_email=campaign.sender_email or settings.SMTP_FROM_EMAIL or "sender@example.com",
-                                status="SENT",
-                                sent_at=datetime.now(timezone.utc)
-                            )
-                            db.add(sent_reply)
-                            logger.info(f"Auto-reply sent successfully to lead {lead.id}")
-                        else:
-                            logger.error(f"Failed to auto-send reply: {smtp_err}")
-                    except Exception as auto_err:
-                        logger.error(f"Failed to generate or send auto-reply: {auto_err}")
+                        db.add(sent_reply)
+                        await self.add_log(f"✓ Auto-replied back to '{lead.bussiness_name}' <{sender_email}>")
+                        logger.info(f"Auto-reply sent successfully to lead ID {lead.id} (<{sender_email}>)")
+                    else:
+                        logger.error(f"Failed to auto-send reply to <{sender_email}>: {smtp_err}")
+                except Exception as auto_err:
+                    logger.error(f"Failed to generate or send auto-reply to <{sender_email}>: {auto_err}")
+
             processed_results.append({
                 "lead_id": lead.id,
                 "business_name": lead.bussiness_name,

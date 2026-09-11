@@ -1,5 +1,7 @@
 import imaplib
 import email
+import email.message
+import email.utils
 from email.header import decode_header
 import logging
 from datetime import datetime, timezone
